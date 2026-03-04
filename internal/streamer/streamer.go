@@ -24,6 +24,9 @@ var indexHTML []byte
 //go:embed sync.js
 var syncJS []byte
 
+//go:embed scary.mp3
+var scaryMP3 []byte
+
 type Streamer struct {
 	Queue      *queue.TrackQueue
 	Subs       *subscribers.Manager
@@ -206,8 +209,9 @@ func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
 
 	if _, flagged := s.flaggedIPs.Load(ipStr); flagged {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Content-Type", "audio/mpeg")
 		s.logger.Info().Str("ip", ipStr).Msg("serving screamer to flagged IP")
-		http.ServeFile(w, r, "/tmp/scary.mp3")
+		w.Write(scaryMP3)
 		return
 	}
 
