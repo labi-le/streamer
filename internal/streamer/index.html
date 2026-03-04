@@ -58,6 +58,20 @@
         }
 
         #track-name { font-size: 24px; font-weight: 600; text-shadow: 0 2px 10px rgba(0,0,0,0.8); margin: 10px 0 4px; word-wrap: break-word;}
+        #listeners {
+            position: fixed; bottom: 20px; right: 20px;
+            font-size: 13px; font-weight: 500;
+            display: flex; align-items: center; gap: 6px;
+            z-index: 100; opacity: 0.8;
+        }
+        #listeners::before {
+            content: '';
+            width: 8px; height: 8px;
+            background: #ff3b30;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
         #status { font-weight: 400; opacity: 0.6; margin-bottom: 0; font-size: 14px; min-height: 20px; }
 
         #progress-wrap { max-width: 320px; margin: 24px auto 20px; }
@@ -230,6 +244,7 @@
 <body>
 <div id="bg-art"></div>
 <button id="toggle-ui" onclick="toggleUI()">UI</button>
+<div id="listeners"></div>
 
 <div id="player-view">
     <div id="main-art"></div>

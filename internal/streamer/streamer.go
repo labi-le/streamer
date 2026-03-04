@@ -138,10 +138,19 @@ func (s *Streamer) RateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Streamer) BroadcastState() {
+type broadcastPayload struct {
+	queue.State
+	Listeners int `json:"listeners"`
+}
+
+func (s *Streamer) marshalState() []byte {
 	state := s.Queue.GetState()
-	b, _ := json.Marshal(state)
-	s.Subs.Broadcast(string(b))
+	b, _ := json.Marshal(broadcastPayload{state, s.Subs.Count()})
+	return b
+}
+
+func (s *Streamer) BroadcastState() {
+	s.Subs.Broadcast(string(s.marshalState()))
 }
 
 func (s *Streamer) IndexHandler(w http.ResponseWriter, r *http.Request) {
@@ -171,14 +180,15 @@ func (s *Streamer) EventsHandler(w http.ResponseWriter, r *http.Request) {
 	ipStr := getIP(r)
 	ch := make(chan string, 1)
 	s.Subs.Add(ch, ipStr)
+	s.BroadcastState()
 
-	state := s.Queue.GetState()
-	b, _ := json.Marshal(state)
-
-	fmt.Fprintf(w, "data: %s\n\n", string(b))
+	fmt.Fprintf(w, "data: %s\n\n", string(s.marshalState()))
 	w.(http.Flusher).Flush()
 
-	defer s.Subs.Remove(ch, ipStr)
+	defer func() {
+		s.Subs.Remove(ch, ipStr)
+		s.BroadcastState()
+	}()
 
 	for {
 		select {

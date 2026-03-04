@@ -27,6 +27,12 @@ func (s *Manager) Remove(ch chan string, remoteAddr string) {
 	s.logger.Info().Str("remote_addr", remoteAddr).Msg("subscriber disconnected")
 }
 
+func (s *Manager) Count() int {
+	n := 0
+	s.subscribers.Range(func(_, _ any) bool { n++; return true })
+	return n
+}
+
 func (s *Manager) Broadcast(msg string) {
 	s.logger.Debug().Msg("broadcasting state to subscribers")
 	s.subscribers.Range(func(key, value interface{}) bool {

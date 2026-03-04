@@ -5,6 +5,7 @@ const nextBtn = document.getElementById('next-btn');
 const libraryListEl = document.getElementById('library-list');
 const queueListEl = document.getElementById('queue-list');
 const searchInput = document.getElementById('search-input');
+const listenersEl = document.getElementById('listeners');
 
 let audioCtx;
 let currentSource;
@@ -70,6 +71,10 @@ function connectSSE() {
 
         currentQueue = data.queue || [];
         renderQueue();
+
+        if (data.listeners !== undefined) {
+            listenersEl.textContent = data.listeners;
+        }
 
         if (data.play_at === currentPlayAt) return;
 
