@@ -17,7 +17,7 @@ var (
 	queue        []string
 	currentTrack string
 	playAt       int64
-	subscribers  map[chan string]bool
+	subscribers  = make(map[chan string]bool)
 	mu           sync.Mutex
 )
 
@@ -55,6 +55,7 @@ const indexHTML = `<!DOCTYPE html>
         let currentSource;
         let serverOffset = 0;
         let currentTrackName = "";
+        let abortController = null;
 
         async function initSystem() {
             startBtn.style.display = 'none';
@@ -86,23 +87,39 @@ const indexHTML = `<!DOCTYPE html>
             events.onmessage = async (e) => {
                 const data = JSON.parse(e.data);
                 if (data.name === currentTrackName) return;
+
+                if (currentSource) {
+                    currentSource.stop();
+                    currentSource.disconnect();
+                    currentSource = null;
+                }
+
+                if (abortController) {
+                    abortController.abort();
+                }
+                abortController = new AbortController();
+                const signal = abortController.signal;
                 
                 currentTrackName = data.name;
-                trackNameEl.innerText = "Decoding: " + data.name;
+                trackNameEl.innerText = "Downloading: " + data.name;
 
                 try {
-                    const response = await fetch('/audio');
+                    const response = await fetch('/audio', { signal });
                     const arrayBuffer = await response.arrayBuffer();
                     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-                    
-                    schedulePlayback(audioBuffer, data.play_at);
+
+                    if (currentTrackName !== data.name) return;
+
+                    schedulePlayback(audioBuffer, data.play_at, data.name);
                 } catch (err) {
-                    trackNameEl.innerText = "Error decoding audio";
+                    if (err.name !== 'AbortError') {
+                        trackNameEl.innerText = "Error decoding audio";
+                    }
                 }
             };
         }
 
-        function schedulePlayback(buffer, playAtMs) {
+        function schedulePlayback(buffer, playAtMs, name) {
             if (currentSource) {
                 currentSource.stop();
                 currentSource.disconnect();
@@ -115,7 +132,7 @@ const indexHTML = `<!DOCTYPE html>
             const nowMs = Date.now() + serverOffset;
             const diffSeconds = (playAtMs - nowMs) / 1000.0;
 
-            trackNameEl.innerText = "Playing: " + currentTrackName;
+            trackNameEl.innerText = "Playing: " + name;
 
             if (diffSeconds > 0) {
                 currentSource.start(audioCtx.currentTime + diffSeconds);
@@ -139,10 +156,11 @@ const indexHTML = `<!DOCTYPE html>
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
-	subscribers = make(map[chan string]bool)
 
-	loadMusicQueue()
-	advanceTrack()
+	mu.Lock()
+	loadMusicQueueInternal()
+	advanceTrackInternal()
+	mu.Unlock()
 
 	http.HandleFunc("/", indexHandler)
 	http.HandleFunc("/time", timeHandler)
@@ -154,10 +172,9 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-func loadMusicQueue() {
+func loadMusicQueueInternal() {
 	entries, err := os.ReadDir(musicDir)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
 		return
 	}
 
@@ -172,31 +189,28 @@ func loadMusicQueue() {
 
 	if len(newQueue) > 0 {
 		queue = newQueue
-		shuffleSlice(queue)
+		for i := len(queue) - 1; i > 0; i-- {
+			j := rand.Intn(i + 1)
+			queue[i], queue[j] = queue[j], queue[i]
+		}
 	}
 }
 
-func shuffleSlice(slice []string) {
-	for i := len(slice) - 1; i > 0; i-- {
-		j := rand.Intn(i + 1)
-		slice[i], slice[j] = slice[j], slice[i]
-	}
-}
-
-func advanceTrack() {
+func advanceTrackInternal() {
 	if len(queue) == 0 {
-		loadMusicQueue()
+		loadMusicQueueInternal()
 	}
+
 	if len(queue) > 0 {
 		currentTrack = queue[0]
 		queue = queue[1:]
-
-		playAt = time.Now().UnixMilli() + 3000
-		broadcastState()
 	}
+
+	playAt = time.Now().UnixMilli() + 3000
+	broadcastStateInternal()
 }
 
-func broadcastState() {
+func broadcastStateInternal() {
 	msg := fmt.Sprintf(`{"name": "%s", "play_at": %d}`, filepath.Base(currentTrack), playAt)
 	for ch := range subscribers {
 		select {
@@ -273,12 +287,12 @@ func skipTrackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mu.Lock()
-	if time.Now().UnixMilli()-playAt < 2000 {
+	if time.Now().UnixMilli()-playAt < 500 {
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	advanceTrack()
+	advanceTrackInternal()
 	mu.Unlock()
 
 	w.WriteHeader(http.StatusOK)
