@@ -14,6 +14,10 @@ let currentPlayAt = 0;
 let abortController = null;
 let currentQueue = [];
 let allLibraryFiles = [];
+let audioEnabled = false;
+
+loadLibrary();
+connectSSE();
 
 async function initSystem() {
     startBtn.style.display = 'none';
@@ -40,9 +44,11 @@ async function initSystem() {
 
     controls.style.display = 'block';
     statusEl.innerText = "Synchronized";
+    audioEnabled = true;
 
-    loadLibrary();
-    connectSSE();
+    if (currentTrackName) {
+        fetchAndPlayAudio(currentPlayAt, currentTrackName);
+    }
 }
 
 function connectSSE() {
@@ -55,40 +61,49 @@ function connectSSE() {
 
         if (data.play_at === currentPlayAt) return;
 
-        if (currentSource) {
-            currentSource.stop();
-            currentSource.disconnect();
-            currentSource = null;
-        }
-
-        if (abortController) {
-            abortController.abort();
-        }
-        abortController = new AbortController();
-        const signal = abortController.signal;
-
         currentPlayAt = data.play_at;
         currentTrackName = data.name;
-        trackNameEl.innerText = "Downloading: " + data.name;
+
+        trackNameEl.innerText = audioEnabled ? "Downloading: " + data.name : "Currently playing: " + data.name;
 
         const artUrl = `/art?track=${encodeURIComponent(data.name)}`;
         document.getElementById('bg-art').style.backgroundImage = `url('${artUrl}')`;
         document.getElementById('main-art').style.backgroundImage = `url('${artUrl}')`;
 
-        try {
-            const response = await fetch('/audio', { signal });
-            const arrayBuffer = await response.arrayBuffer();
-            const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-            if (currentPlayAt !== data.play_at) return;
-
-            schedulePlayback(audioBuffer, data.play_at, data.name);
-        } catch (err) {
-            if (err.name !== 'AbortError') {
-                trackNameEl.innerText = "Error decoding audio";
-            }
+        if (audioEnabled) {
+            fetchAndPlayAudio(data.play_at, data.name);
         }
     };
+}
+
+async function fetchAndPlayAudio(playAtMs, name) {
+    if (currentSource) {
+        currentSource.stop();
+        currentSource.disconnect();
+        currentSource = null;
+    }
+
+    if (abortController) {
+        abortController.abort();
+    }
+    abortController = new AbortController();
+    const signal = abortController.signal;
+
+    trackNameEl.innerText = "Downloading: " + name;
+
+    try {
+        const response = await fetch('/audio', { signal });
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+        if (currentPlayAt !== playAtMs) return;
+
+        schedulePlayback(audioBuffer, playAtMs, name);
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            trackNameEl.innerText = "Error decoding audio";
+        }
+    }
 }
 
 function schedulePlayback(buffer, playAtMs, name) {
