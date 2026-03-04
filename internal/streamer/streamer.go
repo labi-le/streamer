@@ -44,14 +44,59 @@ func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog
 	}
 }
 
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status int
+	size   int
+}
+
+func (w *loggingResponseWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+		w.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (w *loggingResponseWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.size += n
+	return n, err
+}
+
+func (w *loggingResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *loggingResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func (s *Streamer) LoggerMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s.logger.Info().
-			Str("method", r.Method).
-			Str("path", r.URL.Path).
-			Str("remote_addr", r.RemoteAddr).
-			Msg("API Request")
-		next(w, r)
+		start := time.Now()
+		lw := &loggingResponseWriter{ResponseWriter: w}
+
+		defer func() {
+			status := lw.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			s.logger.Info().
+				Str("method", r.Method).
+				Str("path", r.URL.Path).
+				Str("remote_addr", r.RemoteAddr).
+				Int("status", status).
+				Int("size", lw.size).
+				Dur("duration", time.Since(start)).
+				Msg("request")
+		}()
+
+		next(lw, r)
 	}
 }
 
@@ -238,7 +283,25 @@ func (s *Streamer) QueueHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
-		s.Queue.SetItems(items, s.BroadcastState)
+
+		var safeItems []string
+		for _, item := range items {
+			if s.Scanner.Exists(item) {
+				safeItems = append(safeItems, item)
+				continue
+			}
+
+			s.logger.Warn().
+				Str("invalid_track", item).
+				Str("remote_addr", r.RemoteAddr).
+				Msg("Malicious input detected, dropping request")
+
+			w.WriteHeader(http.StatusTeapot)
+			w.Write([]byte(`pidOr`))
+			return
+		}
+
+		s.Queue.SetItems(safeItems, s.BroadcastState)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
