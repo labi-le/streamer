@@ -32,6 +32,7 @@ type Streamer struct {
 	Metadata   *metadata.Provider
 	logger     zerolog.Logger
 	rateLimits sync.Map
+	flaggedIPs sync.Map
 }
 
 func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog.Logger) *Streamer {
@@ -42,6 +43,25 @@ func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog
 		Metadata: meta,
 		logger:   logger.With().Str("component", "streamer").Logger(),
 	}
+}
+
+func getIP(r *http.Request) string {
+	ipStr := r.Header.Get("X-Real-IP")
+	if ipStr == "" {
+		ipStr = r.Header.Get("X-Forwarded-For")
+		if ipStr != "" {
+			ipStr = strings.TrimSpace(strings.Split(ipStr, ",")[0])
+		}
+	}
+	if ipStr == "" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			ipStr = r.RemoteAddr
+		} else {
+			ipStr = host
+		}
+	}
+	return ipStr
 }
 
 type loggingResponseWriter struct {
@@ -80,20 +100,21 @@ func (s *Streamer) LoggerMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		lw := &loggingResponseWriter{ResponseWriter: w}
+		ipStr := getIP(r)
 
 		defer func() {
 			status := lw.status
 			if status == 0 {
 				status = http.StatusOK
 			}
-			s.logger.Info().
+			s.logger.Trace().
 				Str("method", r.Method).
 				Str("path", r.URL.Path).
-				Str("remote_addr", r.RemoteAddr).
+				Str("ip", ipStr).
 				Int("status", status).
 				Int("size", lw.size).
 				Dur("duration", time.Since(start)).
-				Msg("request")
+				Msg("HTTP Request")
 		}()
 
 		next(lw, r)
@@ -107,22 +128,7 @@ func (s *Streamer) RateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		ipStr := r.Header.Get("X-Real-IP")
-		if ipStr == "" {
-			ipStr = r.Header.Get("X-Forwarded-For")
-			if ipStr != "" {
-				ipStr = strings.TrimSpace(strings.Split(ipStr, ",")[0])
-			}
-		}
-		if ipStr == "" {
-			host, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				ipStr = r.RemoteAddr
-			} else {
-				ipStr = host
-			}
-		}
-
+		ipStr := getIP(r)
 		ip := net.ParseIP(ipStr)
 		if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
 			next(w, r)
@@ -173,8 +179,9 @@ func (s *Streamer) EventsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
+	ipStr := getIP(r)
 	ch := make(chan string, 1)
-	s.Subs.Add(ch, r.RemoteAddr)
+	s.Subs.Add(ch, ipStr)
 
 	state := s.Queue.GetState()
 	b, _ := json.Marshal(state)
@@ -184,7 +191,7 @@ func (s *Streamer) EventsHandler(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	defer s.Subs.Remove(ch, r.RemoteAddr)
+	defer s.Subs.Remove(ch, ipStr)
 
 	for {
 		select {
@@ -200,6 +207,15 @@ func (s *Streamer) EventsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
+	ipStr := getIP(r)
+
+	if _, flagged := s.flaggedIPs.Load(ipStr); flagged {
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		s.logger.Info().Str("ip", ipStr).Msg("Serving screamer to flagged IP")
+		http.ServeFile(w, r, "/tmp/scary.mp3")
+		return
+	}
+
 	state := s.Queue.GetState()
 	track := state.Name
 
@@ -216,7 +232,7 @@ func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
 
 	safePath := filepath.Join(local.MusicDir, filepath.Clean(track))
 	if !strings.HasPrefix(safePath, filepath.Clean(local.MusicDir)) {
-		s.logger.Warn().Str("track", track).Str("remote_addr", r.RemoteAddr).Msg("Forbidden access")
+		s.logger.Warn().Str("track", track).Str("ip", ipStr).Msg("Forbidden access")
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -251,13 +267,13 @@ func (s *Streamer) SkipTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := s.Queue.GetState()
-	if time.Now().UnixMilli()-state.PlayAt < 500 {
-		s.logger.Warn().Msg("Skip too frequent")
-		return
-	}
+	//state := s.Queue.GetState()
+	//if time.Now().UnixMilli()-state.PlayAt < 500 {
+	//	s.logger.Warn().Msg("Skip too frequent")
+	//	return
+	//}
 
-	s.logger.Info().Msg("Skip requested")
+	s.logger.Info().Str("ip", getIP(r)).Msg("Skip requested")
 	s.Queue.Advance(s.BroadcastState)
 }
 
@@ -265,6 +281,12 @@ func (s *Streamer) LibraryHandler(w http.ResponseWriter, r *http.Request) {
 	files := s.Scanner.Scan()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(files)
+}
+
+type queueCmd struct {
+	Action string `json:"action"`
+	Track  string `json:"track"`
+	Index  int    `json:"index"`
 }
 
 func (s *Streamer) QueueHandler(w http.ResponseWriter, r *http.Request) {
@@ -277,31 +299,34 @@ func (s *Streamer) QueueHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		var items []string
-		if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
-			s.logger.Error().Err(err).Msg("Decode failed")
+		var cmd queueCmd
+		if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
 
-		var safeItems []string
-		for _, item := range items {
-			if s.Scanner.Exists(item) {
-				safeItems = append(safeItems, item)
-				continue
-			}
+		if !s.Scanner.Exists(cmd.Track) {
+			ipStr := getIP(r)
+			s.flaggedIPs.Store(ipStr, struct{}{})
 
 			s.logger.Warn().
-				Str("invalid_track", item).
-				Str("remote_addr", r.RemoteAddr).
-				Msg("Malicious input detected, dropping request")
+				Str("invalid_track", cmd.Track).
+				Str("ip", ipStr).
+				Msg("Malicious input detected, IP flagged for screamer")
 
 			w.WriteHeader(http.StatusTeapot)
 			w.Write([]byte(`pidOr`))
 			return
 		}
 
-		s.Queue.SetItems(safeItems, s.BroadcastState)
+		if cmd.Action == "add" {
+			s.Queue.AppendItem(cmd.Track, s.BroadcastState)
+		}
+
+		if cmd.Action == "remove" {
+			s.Queue.RemoveItem(cmd.Index, s.BroadcastState)
+		}
+
 		w.WriteHeader(http.StatusOK)
 		return
 	}

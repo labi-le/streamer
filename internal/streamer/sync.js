@@ -64,7 +64,7 @@ function connectSSE() {
         currentPlayAt = data.play_at;
         currentTrackName = data.name;
 
-        trackNameEl.innerText = audioEnabled ? "Downloading: " + data.name : "Currently playing: " + data.name;
+        trackNameEl.innerText = data.name;
 
         const artUrl = `/art?track=${encodeURIComponent(data.name)}`;
         document.getElementById('bg-art').style.backgroundImage = `url('${artUrl}')`;
@@ -89,7 +89,7 @@ async function fetchAndPlayAudio(playAtMs, name) {
     abortController = new AbortController();
     const signal = abortController.signal;
 
-    trackNameEl.innerText = "Downloading: " + name;
+    trackNameEl.innerText = name;
 
     try {
         const response = await fetch('/audio', { signal });
@@ -119,7 +119,7 @@ function schedulePlayback(buffer, playAtMs, name) {
     const nowMs = Date.now() + serverOffset;
     const diffSeconds = (playAtMs - nowMs) / 1000.0;
 
-    trackNameEl.innerText = "Playing: " + name;
+    trackNameEl.innerText = name;
 
     if (diffSeconds > 0) {
         currentSource.start(audioCtx.currentTime + diffSeconds);
@@ -187,25 +187,41 @@ function renderQueue() {
 }
 
 async function addToQueue(filename) {
-    const newQueue = [...currentQueue, filename];
     await fetch('/api/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newQueue)
+        body: JSON.stringify({ action: "add", track: filename })
     });
 }
 
 async function removeFromQueue(index) {
-    const newQueue = [...currentQueue];
-    newQueue.splice(index, 1);
     await fetch('/api/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newQueue)
+        body: JSON.stringify({ action: "remove", index: index })
     });
 }
 
 function toggleUI() {
     const content = document.getElementById('main-content');
     content.classList.toggle('hidden');
+}
+
+function switchTab(tab) {
+    const libBox = document.getElementById('library-box');
+    const queueBox = document.getElementById('queue-box');
+    const libBtn = document.getElementById('tab-library');
+    const queueBtn = document.getElementById('tab-queue');
+
+    if (tab === 'library') {
+        libBox.classList.remove('mobile-hidden');
+        queueBox.classList.add('mobile-hidden');
+        libBtn.classList.add('active');
+        queueBtn.classList.remove('active');
+    } else {
+        libBox.classList.add('mobile-hidden');
+        queueBox.classList.remove('mobile-hidden');
+        libBtn.classList.remove('active');
+        queueBtn.classList.add('active');
+    }
 }

@@ -132,19 +132,43 @@ func (q *TrackQueue) Advance(onDone func()) {
 	}
 }
 
-func (q *TrackQueue) SetItems(items []string, onDone func()) {
+func (q *TrackQueue) AppendItem(item string, onDone func()) {
 	q.mu.Lock()
 	curr := q.state.Load()
 
-	newQueue := make([]string, len(items))
-	copy(newQueue, items)
+	newQueue := make([]string, len(curr.Queue), len(curr.Queue)+1)
+	copy(newQueue, curr.Queue)
+	newQueue = append(newQueue, item)
 
 	q.state.Store(&State{
 		Name:   curr.Name,
 		PlayAt: curr.PlayAt,
 		Queue:  newQueue,
 	})
-	q.logger.Info().Int("size", len(items)).Msg("Queue updated")
+	q.logger.Info().Str("track", item).Msg("Track appended to queue")
+	q.mu.Unlock()
+
+	if onDone != nil {
+		onDone()
+	}
+}
+
+func (q *TrackQueue) RemoveItem(idx int, onDone func()) {
+	q.mu.Lock()
+	curr := q.state.Load()
+
+	if idx >= 0 && idx < len(curr.Queue) {
+		newQueue := make([]string, 0, len(curr.Queue)-1)
+		newQueue = append(newQueue, curr.Queue[:idx]...)
+		newQueue = append(newQueue, curr.Queue[idx+1:]...)
+
+		q.state.Store(&State{
+			Name:   curr.Name,
+			PlayAt: curr.PlayAt,
+			Queue:  newQueue,
+		})
+		q.logger.Info().Int("index", idx).Msg("Track removed from queue")
+	}
 	q.mu.Unlock()
 
 	if onDone != nil {

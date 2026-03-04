@@ -2,9 +2,29 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Perfect Sync</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; background: #111; color: #eee; text-align: center; margin: 0; min-height: 100vh; position: relative; }
+        :root {
+            --primary-color: rgba(255, 0, 0, 0.15);
+            --primary-border: rgba(255, 0, 0, 0.3);
+            --bg-color: #111;
+            --text-color: #eee;
+            --blur-bg: rgba(255, 255, 255, 0.1);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            padding: 20px;
+            background: var(--bg-color);
+            color: var(--text-color);
+            text-align: center;
+            margin: 0;
+            min-height: 100vh;
+            position: relative;
+            box-sizing: border-box;
+            overflow-x: hidden;
+        }
 
         #bg-art {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -16,25 +36,29 @@
         #toggle-ui {
             position: fixed; top: 15px; right: 15px; z-index: 100;
             opacity: 0.6; cursor: pointer;
-            background: rgba(255, 255, 255, 0.1);
+            background: var(--blur-bg);
             color: white; border: 1px solid rgba(255, 255, 255, 0.2);
             padding: 8px 15px; border-radius: 8px;
             backdrop-filter: blur(10px);
             transition: all 0.3s;
         }
-        #toggle-ui:hover { opacity: 1; background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.4); }
+        #toggle-ui:hover { opacity: 1; background: rgba(255, 255, 255, 0.2); }
 
-        #player-view { position: relative; z-index: 2; margin-top: 50px; }
+        #player-view { position: relative; z-index: 2; margin-top: 30px; }
+        
         #main-art {
-            width: 320px; height: 320px; margin: 0 auto 15px;
+            width: 100%; max-width: 320px;
+            aspect-ratio: 1/1;
+            margin: 0 auto 15px;
             background-size: cover; background-position: center;
             border-radius: 20px; box-shadow: 0 15px 45px rgba(0,0,0,0.6);
             background-color: #222;
         }
-        #track-name { font-size: 24px; text-shadow: 0 2px 10px rgba(0,0,0,0.8); margin: 10px 0; }
+
+        #track-name { font-size: 24px; text-shadow: 0 2px 10px rgba(0,0,0,0.8); margin: 10px 0; word-wrap: break-word;}
         #status { font-weight: 300; opacity: 0.8; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; font-size: 14px; }
 
-        .content { position: relative; z-index: 1; transition: opacity 0.5s ease; padding-top: 20px; }
+        .content { position: relative; z-index: 1; transition: opacity 0.5s ease; padding-top: 10px; }
         .hidden { display: none !important; }
 
         #action-area {
@@ -43,10 +67,11 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            gap: 15px;
         }
 
         .btn {
-            min-width: 160px;
+            min-width: 140px;
             padding: 12px 24px;
             font-size: 16px;
             font-weight: 500;
@@ -56,11 +81,12 @@
             border-radius: 8px;
             backdrop-filter: blur(10px);
             transition: all 0.3s ease;
+            touch-action: manipulation;
         }
 
         .btn-primary {
-            background: rgba(255, 0, 0, 0.15);
-            border: 1px solid rgba(255, 0, 0, 0.3);
+            background: var(--primary-color);
+            border: 1px solid var(--primary-border);
             color: white;
         }
         .btn-primary:hover { background: rgba(255, 0, 0, 0.25); border-color: rgba(255, 0, 0, 0.5); }
@@ -72,7 +98,14 @@
         }
         .btn-secondary:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.4); }
 
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 900px; margin: 0 auto; text-align: left;}
+        .grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 20px; 
+            max-width: 900px; 
+            margin: 0 auto; 
+            text-align: left;
+        }
 
         .list-box {
             background: transparent;
@@ -85,12 +118,15 @@
             flex-direction: column;
             border: 1px solid rgba(255,255,255,0.2);
             box-shadow: 0 15px 50px rgba(0, 0, 0, 0.4);
+            transition: transform 0.3s ease;
         }
 
         #library-list, #queue-list { overflow-y: auto; flex-grow: 1; margin-top: 10px; padding-right: 5px; }
-        #library-list::-webkit-scrollbar, #queue-list::-webkit-scrollbar { width: 4px; }
-        #library-list::-webkit-scrollbar-thumb, #queue-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.4); border-radius: 10px; }
-        #library-list::-webkit-scrollbar-track, #queue-list::-webkit-scrollbar-track { background: transparent; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.4); border-radius: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
 
         .track-item {
             padding: 12px;
@@ -100,12 +136,14 @@
             border-radius: 10px;
             display: flex;
             justify-content: space-between;
+            align-items: center;
             border: 1px solid rgba(255,255,255,0.05);
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
+            font-size: 14px;
         }
+        .track-item:active { transform: scale(0.98); }
         .track-item:hover {
             background: rgba(255,255,255,0.15);
-            transform: translateX(5px);
             border-color: rgba(255,255,255,0.2);
         }
 
@@ -115,11 +153,52 @@
             border-radius: 8px; font-size: 14px;
         }
         #search-input:focus { outline: none; border-color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.15); }
+
+        /* Mobile Specifics */
+        #mobile-tabs { display: none; margin-bottom: 15px; justify-content: center; gap: 10px; }
+        .tab-btn {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #aaa;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            flex: 1;
+            max-width: 150px;
+        }
+        .tab-btn.active {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border-color: rgba(255,255,255,0.3);
+        }
+
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            #player-view { margin-top: 10px; }
+            #main-art { max-width: 260px; }
+            .grid { display: block; }
+            
+            #mobile-tabs { display: flex; }
+            
+            .list-box {
+                height: auto;
+                min-height: 400px;
+                max-height: 60vh;
+                margin-bottom: 80px; /* Space for bottom interaction */
+            }
+            
+            .mobile-hidden { display: none !important; }
+            
+            #action-area { flex-direction: column; height: auto; gap: 10px; }
+            .btn { width: 100%; }
+        }
     </style>
 </head>
 <body>
 <div id="bg-art"></div>
-<button id="toggle-ui" onclick="toggleUI()">Show/Hide UI</button>
+<button id="toggle-ui" onclick="toggleUI()">UI</button>
 
 <div id="player-view">
     <div id="main-art"></div>
@@ -130,17 +209,23 @@
     <h4 id="status">Waiting to join...</h4>
 
     <div id="action-area">
-        <button id="start-btn" onclick="initSystem()" class="btn btn-primary">JOIN RADIO</button>
-        <button id="next-btn" onclick="skipTrack()" class="btn btn-secondary hidden">NEXT TRACK</button>
+        <button id="start-btn" onclick="initSystem()" class="btn btn-primary">JOIN</button>
+        <button id="next-btn" onclick="skipTrack()" class="btn btn-secondary hidden">NEXT</button>
+    </div>
+
+    <!-- Mobile Tab Navigation -->
+    <div id="mobile-tabs">
+        <button id="tab-library" class="tab-btn active" onclick="switchTab('library')">Library</button>
+        <button id="tab-queue" class="tab-btn" onclick="switchTab('queue')">Queue</button>
     </div>
 
     <div class="grid">
-        <div class="list-box">
+        <div id="library-box" class="list-box">
             <h3>Library</h3>
             <input type="text" id="search-input" placeholder="Search track...">
             <div id="library-list"></div>
         </div>
-        <div class="list-box">
+        <div id="queue-box" class="list-box mobile-hidden">
             <h3>Queue</h3>
             <div id="queue-list"></div>
         </div>
