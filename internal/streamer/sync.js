@@ -66,9 +66,17 @@ function connectSSE() {
 
         trackNameEl.innerText = data.name;
 
-        const artUrl = `/art?track=${encodeURIComponent(data.name)}`;
-        document.getElementById('bg-art').style.backgroundImage = `url('${artUrl}')`;
-        document.getElementById('main-art').style.backgroundImage = `url('${artUrl}')`;
+        const bgArt = document.getElementById('bg-art');
+        const mainArt = document.getElementById('main-art');
+        bgArt.style.backgroundImage = '';
+        mainArt.style.backgroundImage = '';
+        const img = new Image();
+        img.onload = () => {
+            const artUrl = `url('${img.src}')`;
+            bgArt.style.backgroundImage = artUrl;
+            mainArt.style.backgroundImage = artUrl;
+        };
+        img.src = `/art?track=${encodeURIComponent(data.name)}`;
 
         if (audioEnabled) {
             fetchAndPlayAudio(data.play_at, data.name);
