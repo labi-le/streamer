@@ -3,7 +3,6 @@ package metadata
 import (
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/dhowden/tag"
 	"github.com/rs/zerolog"
@@ -21,21 +20,13 @@ type Provider struct {
 
 func NewProvider(baseDir string, logger zerolog.Logger) *Provider {
 	return &Provider{
-		baseDir: baseDir,
+		baseDir: filepath.Clean(baseDir),
 		logger:  logger.With().Str("component", "metadata").Logger(),
 	}
 }
 
 func (p *Provider) GetArtwork(filename string) (*Artwork, error) {
-	cleanBase := filepath.Clean(p.baseDir)
-	targetPath := filepath.Join(cleanBase, filepath.Clean(filename))
-
-	if !strings.HasPrefix(targetPath, cleanBase+string(filepath.Separator)) {
-		p.logger.Warn().Str("file", filename).Msg("Path traversal attempt blocked")
-		return nil, os.ErrNotExist
-	}
-
-	f, err := os.Open(targetPath)
+	f, err := os.Open(filepath.Join(p.baseDir, filename))
 	if err != nil {
 		return nil, err
 	}
@@ -43,13 +34,13 @@ func (p *Provider) GetArtwork(filename string) (*Artwork, error) {
 
 	m, err := tag.ReadFrom(f)
 	if err != nil {
-		p.logger.Debug().Err(err).Str("file", filename).Msg("Failed to read tags")
+		p.logger.Debug().Err(err).Str("file", filename).Msg("failed to read tags")
 		return nil, err
 	}
 
 	pic := m.Picture()
 	if pic == nil {
-		p.logger.Debug().Str("file", filename).Msg("No picture found in tags")
+		p.logger.Debug().Str("file", filename).Msg("no picture found in tags")
 		return nil, nil
 	}
 

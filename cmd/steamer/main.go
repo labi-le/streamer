@@ -45,8 +45,8 @@ func main() {
 
 	http.HandleFunc("/api/library", s.LoggerMiddleware(s.LibraryHandler))
 
-	l.Info().Msg("Server running on http://localhost:7777")
+	l.Info().Msg("server running on http://localhost:7777")
 	if err := http.ListenAndServe(":7777", nil); err != nil {
-		l.Fatal().Err(err).Msg("Server failed")
+		l.Fatal().Err(err).Msg("server failed")
 	}
 }

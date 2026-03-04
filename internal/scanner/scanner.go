@@ -26,7 +26,7 @@ type LocalScanner struct {
 
 func NewLocalScanner(musicDir string, logger zerolog.Logger) *LocalScanner {
 	return &LocalScanner{
-		MusicDir: musicDir,
+		MusicDir: filepath.Clean(musicDir),
 		logger:   logger.With().Str("component", "scanner").Logger(),
 	}
 }
@@ -34,7 +34,7 @@ func NewLocalScanner(musicDir string, logger zerolog.Logger) *LocalScanner {
 func (s *LocalScanner) updateCache() {
 	entries, err := os.ReadDir(s.MusicDir)
 	if err != nil {
-		s.logger.Error().Err(err).Str("dir", s.MusicDir).Msg("Failed to read music directory")
+		s.logger.Error().Err(err).Str("dir", s.MusicDir).Msg("failed to read music directory")
 		return
 	}
 
@@ -57,7 +57,7 @@ func (s *LocalScanner) updateCache() {
 	s.cacheMap = fileMap
 	s.lastUpdate = time.Now()
 
-	s.logger.Debug().Int("count", len(files)).Msg("Library scanned and cached")
+	s.logger.Debug().Int("count", len(files)).Msg("library scanned and cached")
 }
 
 func (s *LocalScanner) Scan() []string {

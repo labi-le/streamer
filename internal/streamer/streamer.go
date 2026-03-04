@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -127,10 +126,11 @@ func (s *Streamer) RateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		if val, ok := s.rateLimits.Load(ipStr); ok {
 			lastSeen := val.(time.Time)
 			if time.Since(lastSeen) < 5*time.Second {
-				s.logger.Warn().Str("ip", ipStr).Msg("Rate limit exceeded")
+				s.logger.Warn().Str("ip", ipStr).Msg("rate limit exceeded")
 				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 				return
 			}
+			s.rateLimits.Delete(ipStr)
 		}
 
 		s.rateLimits.Store(ipStr, time.Now())
@@ -176,9 +176,7 @@ func (s *Streamer) EventsHandler(w http.ResponseWriter, r *http.Request) {
 	b, _ := json.Marshal(state)
 
 	fmt.Fprintf(w, "data: %s\n\n", string(b))
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
+	w.(http.Flusher).Flush()
 
 	defer s.Subs.Remove(ch, ipStr)
 
@@ -186,9 +184,7 @@ func (s *Streamer) EventsHandler(w http.ResponseWriter, r *http.Request) {
 		select {
 		case msg := <-ch:
 			fmt.Fprintf(w, "data: %s\n\n", msg)
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
+			w.(http.Flusher).Flush()
 		case <-r.Context().Done():
 			return
 		}
@@ -200,7 +196,7 @@ func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
 
 	if _, flagged := s.flaggedIPs.Load(ipStr); flagged {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-		s.logger.Info().Str("ip", ipStr).Msg("Serving screamer to flagged IP")
+		s.logger.Info().Str("ip", ipStr).Msg("serving screamer to flagged IP")
 		http.ServeFile(w, r, "/tmp/scary.mp3")
 		return
 	}
@@ -219,16 +215,9 @@ func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	safePath := filepath.Join(local.MusicDir, filepath.Clean(track))
-	if !strings.HasPrefix(safePath, filepath.Clean(local.MusicDir)) {
-		s.logger.Warn().Str("track", track).Str("ip", ipStr).Msg("Forbidden access")
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-	s.logger.Debug().Str("track", track).Msg("Serving audio")
-	http.ServeFile(w, r, safePath)
+	s.logger.Debug().Str("track", track).Msg("serving audio")
+	http.ServeFile(w, r, filepath.Join(local.MusicDir, track))
 }
 
 func (s *Streamer) ArtHandler(w http.ResponseWriter, r *http.Request) {
@@ -256,13 +245,7 @@ func (s *Streamer) SkipTrackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//state := s.Queue.GetState()
-	//if time.Now().UnixMilli()-state.PlayAt < 500 {
-	//	s.logger.Warn().Msg("Skip too frequent")
-	//	return
-	//}
-
-	s.logger.Info().Str("ip", getIP(r)).Msg("Skip requested")
+	s.logger.Info().Str("ip", getIP(r)).Msg("skip requested")
 	s.Queue.Advance(s.BroadcastState)
 }
 
@@ -303,7 +286,7 @@ func (s *Streamer) QueueHandler(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn().
 					Str("invalid_track", cmd.Track).
 					Str("ip", ipStr).
-					Msg("Malicious input detected, IP flagged for screamer")
+					Msg("malicious input detected, IP flagged for screamer")
 
 				w.WriteHeader(http.StatusTeapot)
 				w.Write([]byte(`pidOr`))

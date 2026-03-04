@@ -94,7 +94,7 @@ func (q *TrackQueue) fillQueue() {
 		Queue:  newQueue,
 	})
 
-	q.logger.Debug().Int("added", needed).Int("total", len(newQueue)).Msg("Queue topped up")
+	q.logger.Debug().Int("added", needed).Int("total", len(newQueue)).Msg("queue topped up")
 }
 
 func (q *TrackQueue) GetState() State {
@@ -119,9 +119,9 @@ func (q *TrackQueue) Advance(onDone func()) {
 	if len(items) > 0 {
 		newState.Name = items[0]
 		newState.Queue = items[1:]
-		q.logger.Info().Str("track", newState.Name).Int("remaining", len(newState.Queue)).Msg("Advancing track")
+		q.logger.Info().Str("track", newState.Name).Int("remaining", len(newState.Queue)).Msg("advancing track")
 	} else {
-		q.logger.Warn().Msg("Advance called but queue is empty")
+		q.logger.Warn().Msg("advance called but queue is empty")
 	}
 
 	q.state.Store(newState)
@@ -137,7 +137,7 @@ func (q *TrackQueue) AppendItem(item string, onDone func()) {
 	curr := q.state.Load()
 
 	if len(curr.Queue) >= 200 {
-		q.logger.Warn().Msg("Queue limit reached, rejecting item")
+		q.logger.Warn().Msg("queue limit reached, rejecting item")
 		q.mu.Unlock()
 		return
 	}
@@ -151,7 +151,7 @@ func (q *TrackQueue) AppendItem(item string, onDone func()) {
 		PlayAt: curr.PlayAt,
 		Queue:  newQueue,
 	})
-	q.logger.Info().Str("track", item).Msg("Track appended to queue")
+	q.logger.Info().Str("track", item).Msg("track appended to queue")
 	q.mu.Unlock()
 
 	if onDone != nil {
@@ -173,7 +173,7 @@ func (q *TrackQueue) RemoveItem(idx int, onDone func()) {
 			PlayAt: curr.PlayAt,
 			Queue:  newQueue,
 		})
-		q.logger.Info().Int("index", idx).Msg("Track removed from queue")
+		q.logger.Info().Int("index", idx).Msg("track removed from queue")
 	}
 	q.mu.Unlock()
 
