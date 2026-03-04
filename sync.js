@@ -2,12 +2,17 @@ const statusEl = document.getElementById('status');
 const trackNameEl = document.getElementById('track-name');
 const startBtn = document.getElementById('start-btn');
 const controls = document.getElementById('controls');
+const libraryListEl = document.getElementById('library-list');
+const queueListEl = document.getElementById('queue-list');
+const searchInput = document.getElementById('search-input');
 
 let audioCtx;
 let currentSource;
 let serverOffset = 0;
 let currentTrackName = "";
 let abortController = null;
+let currentQueue = [];
+let allLibraryFiles = [];
 
 async function initSystem() {
     startBtn.style.display = 'none';
@@ -34,6 +39,8 @@ async function initSystem() {
 
     controls.style.display = 'block';
     statusEl.innerText = "Synchronized";
+
+    loadLibrary();
     connectSSE();
 }
 
@@ -41,6 +48,10 @@ function connectSSE() {
     const events = new EventSource('/events');
     events.onmessage = async (e) => {
         const data = JSON.parse(e.data);
+
+        currentQueue = data.queue || [];
+        renderQueue();
+
         if (data.name === currentTrackName) return;
 
         if (currentSource) {
@@ -104,4 +115,71 @@ function schedulePlayback(buffer, playAtMs, name) {
 
 function skipTrack() {
     fetch('/api/next', { method: 'POST' });
+}
+
+async function loadLibrary() {
+    const res = await fetch('/api/library');
+    allLibraryFiles = await res.json() || [];
+    renderLibrary(allLibraryFiles);
+}
+
+searchInput.addEventListener('input', (e) => {
+    const term = e.target.value.toLowerCase();
+    if (!term) {
+        renderLibrary(allLibraryFiles);
+        return;
+    }
+
+    const filtered = allLibraryFiles.filter(f => {
+        const str = f.toLowerCase();
+        let i = 0, j = 0;
+        while (i < str.length && j < term.length) {
+            if (str[i] === term[j]) j++;
+            i++;
+        }
+        return j === term.length;
+    });
+
+    renderLibrary(filtered);
+});
+
+function renderLibrary(files) {
+    libraryListEl.innerHTML = '';
+    files.forEach(f => {
+        const div = document.createElement('div');
+        div.className = 'track-item';
+        div.innerText = f;
+        div.onclick = () => addToQueue(f);
+        libraryListEl.appendChild(div);
+    });
+}
+
+function renderQueue() {
+    queueListEl.innerHTML = '';
+    currentQueue.forEach((f, idx) => {
+        const div = document.createElement('div');
+        div.className = 'track-item';
+        div.innerText = `${idx + 1}. ${f}`;
+        div.onclick = () => removeFromQueue(idx);
+        queueListEl.appendChild(div);
+    });
+}
+
+async function addToQueue(filename) {
+    const newQueue = [...currentQueue, filename];
+    await fetch('/api/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newQueue)
+    });
+}
+
+async function removeFromQueue(index) {
+    const newQueue = [...currentQueue];
+    newQueue.splice(index, 1);
+    await fetch('/api/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newQueue)
+    });
 }

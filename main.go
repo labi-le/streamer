@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -32,81 +33,105 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	mu.Lock()
-	loadMusicQueueInternal()
+	initQueueInternal()
 	advanceTrackInternal()
 	mu.Unlock()
 
-	http.HandleFunc("/", indexHandler)
-	http.HandleFunc("/sync.js", jsHandler)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
+	})
+	http.HandleFunc("/sync.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Write(syncJS)
+	})
 	http.HandleFunc("/time", timeHandler)
 	http.HandleFunc("/events", eventsHandler)
 	http.HandleFunc("/audio", audioHandler)
+
 	http.HandleFunc("/api/next", skipTrackHandler)
+	http.HandleFunc("/api/library", libraryHandler)
+	http.HandleFunc("/api/queue", queueHandler)
 
 	fmt.Println("Server running on http://localhost:7777")
 	log.Fatal(http.ListenAndServe(":7777", nil))
 }
 
-func loadMusicQueueInternal() {
+func getLibraryFiles() []string {
 	entries, err := os.ReadDir(musicDir)
 	if err != nil {
-		return
+		return nil
 	}
-
 	exts := map[string]bool{".mp3": true, ".m4a": true, ".wav": true, ".flac": true, ".ogg": true, ".aac": true}
-	var newQueue []string
-
+	var files []string
 	for _, e := range entries {
 		if !e.IsDir() && exts[strings.ToLower(filepath.Ext(e.Name()))] {
-			newQueue = append(newQueue, filepath.Join(musicDir, e.Name()))
+			files = append(files, e.Name())
 		}
 	}
+	return files
+}
 
-	if len(newQueue) > 0 {
-		queue = newQueue
-		for i := len(queue) - 1; i > 0; i-- {
+func initQueueInternal() {
+	files := getLibraryFiles()
+	if len(files) > 0 {
+		for i := len(files) - 1; i > 0; i-- {
 			j := rand.Intn(i + 1)
-			queue[i], queue[j] = queue[j], queue[i]
+			files[i], files[j] = files[j], files[i]
 		}
+
+		limit := 10
+		if len(files) < limit {
+			limit = len(files)
+		}
+
+		queue = make([]string, limit)
+		copy(queue, files[:limit])
 	}
 }
 
 func advanceTrackInternal() {
 	if len(queue) == 0 {
-		loadMusicQueueInternal()
+		initQueueInternal()
 	}
-
 	if len(queue) > 0 {
 		currentTrack = queue[0]
 		queue = queue[1:]
 	}
-
-	playAt = time.Now().UnixMilli() + 3000
+	playAt = time.Now().UnixMilli() + 5000
 	broadcastStateInternal()
 }
 
+func getStateJSON() string {
+	q := queue
+	if q == nil {
+		q = []string{}
+	}
+	payload := struct {
+		Name   string   `json:"name"`
+		PlayAt int64    `json:"play_at"`
+		Queue  []string `json:"queue"`
+	}{
+		Name:   currentTrack,
+		PlayAt: playAt,
+		Queue:  q,
+	}
+	b, _ := json.Marshal(payload)
+	return string(b)
+}
+
 func broadcastStateInternal() {
-	msg := fmt.Sprintf(`{"name": "%s", "play_at": %d}`, filepath.Base(currentTrack), playAt)
+	msg := getStateJSON()
 	for ch := range subscribers {
 		select {
 		case ch <- msg:
 		default:
 		}
 	}
-}
-
-func indexHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(indexHTML)
-}
-
-func jsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-	w.Write(syncJS)
 }
 
 func timeHandler(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +148,7 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	mu.Lock()
 	subscribers[ch] = true
-	initialMsg := fmt.Sprintf(`{"name": "%s", "play_at": %d}`, filepath.Base(currentTrack), playAt)
+	initialMsg := getStateJSON()
 	mu.Unlock()
 
 	fmt.Fprintf(w, "data: %s\n\n", initialMsg)
@@ -156,8 +181,14 @@ func audioHandler(w http.ResponseWriter, r *http.Request) {
 	track := currentTrack
 	mu.Unlock()
 
+	safePath := filepath.Join(musicDir, filepath.Clean(track))
+	if !strings.HasPrefix(safePath, filepath.Clean(musicDir)) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-	http.ServeFile(w, r, track)
+	http.ServeFile(w, r, safePath)
 }
 
 func skipTrackHandler(w http.ResponseWriter, r *http.Request) {
@@ -165,15 +196,44 @@ func skipTrackHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-
 	mu.Lock()
 	if time.Now().UnixMilli()-playAt < 500 {
 		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
 		return
 	}
 	advanceTrackInternal()
 	mu.Unlock()
+}
 
-	w.WriteHeader(http.StatusOK)
+func libraryHandler(w http.ResponseWriter, r *http.Request) {
+	files := getLibraryFiles()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files)
+}
+
+func queueHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodGet {
+		mu.Lock()
+		json.NewEncoder(w).Encode(queue)
+		mu.Unlock()
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		var newQueue []string
+		if err := json.NewDecoder(r.Body).Decode(&newQueue); err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		queue = newQueue
+		broadcastStateInternal()
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
 }
