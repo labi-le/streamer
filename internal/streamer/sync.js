@@ -15,13 +15,25 @@ let abortController = null;
 let currentQueue = [];
 let allLibraryFiles = [];
 let audioEnabled = false;
+let progressRaf = null;
+let currentArtUrl = null;
+const progressFill = document.getElementById('progress-fill');
+const timeElapsed = document.getElementById('time-elapsed');
+const timeRemaining = document.getElementById('time-remaining');
+
+function fmtTime(sec) {
+    const s = Math.max(0, Math.floor(sec));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+const bgArt = document.getElementById('bg-art');
+const mainArt = document.getElementById('main-art');
 
 loadLibrary();
 connectSSE();
 
 async function initSystem() {
     startBtn.classList.add('hidden');
-    statusEl.innerText = "Syncing clocks...";
+    statusEl.innerHTML = '<span class="waveform"><span></span><span></span><span></span><span></span><span></span></span>';
 
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') {
@@ -43,7 +55,7 @@ async function initSystem() {
     serverOffset = samples[0].offset;
 
     nextBtn.classList.remove('hidden');
-    statusEl.innerText = "Synchronized";
+    statusEl.innerHTML = '';
     audioEnabled = true;
 
     if (currentTrackName) {
@@ -66,17 +78,18 @@ function connectSSE() {
 
         trackNameEl.innerText = data.name;
 
-        const bgArt = document.getElementById('bg-art');
-        const mainArt = document.getElementById('main-art');
         bgArt.style.backgroundImage = '';
         mainArt.style.backgroundImage = '';
-        const img = new Image();
-        img.onload = () => {
-            const artUrl = `url('${img.src}')`;
-            bgArt.style.backgroundImage = artUrl;
-            mainArt.style.backgroundImage = artUrl;
-        };
-        img.src = `/art?track=${encodeURIComponent(data.name)}`;
+        if (currentArtUrl) { URL.revokeObjectURL(currentArtUrl); currentArtUrl = null; }
+        fetch(`/art?track=${encodeURIComponent(data.name)}`)
+            .then(res => res.ok ? res.blob() : null)
+            .then(blob => {
+                if (!blob) return;
+                currentArtUrl = URL.createObjectURL(blob);
+                const artUrl = `url('${currentArtUrl}')`;
+                bgArt.style.backgroundImage = artUrl;
+                mainArt.style.backgroundImage = artUrl;
+            });
 
         if (audioEnabled) {
             fetchAndPlayAudio(data.play_at, data.name);
@@ -140,6 +153,21 @@ function schedulePlayback(buffer, playAtMs, name) {
             skipTrack();
         }
     };
+
+    if (progressRaf) cancelAnimationFrame(progressRaf);
+    const duration = buffer.duration;
+    function updateProgress() {
+        const elapsed = (Date.now() + serverOffset - playAtMs) / 1000;
+        const pct = Math.min(elapsed / duration * 100, 100);
+        progressFill.style.width = pct + '%';
+        timeElapsed.textContent = fmtTime(elapsed);
+        timeRemaining.textContent = '-' + fmtTime(duration - elapsed);
+        if (pct < 100) progressRaf = requestAnimationFrame(updateProgress);
+    }
+    progressFill.style.width = '0%';
+    timeElapsed.textContent = '0:00';
+    timeRemaining.textContent = '-' + fmtTime(duration);
+    requestAnimationFrame(updateProgress);
 }
 
 function skipTrack() {

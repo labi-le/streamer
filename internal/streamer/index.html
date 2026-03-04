@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Perfect Sync</title>
+    <title>Potok</title>
     <style>
         :root {
             --primary-color: rgba(255, 0, 0, 0.15);
@@ -35,14 +35,16 @@
 
         #toggle-ui {
             position: fixed; top: 15px; right: 15px; z-index: 100;
-            opacity: 0.6; cursor: pointer;
-            background: var(--blur-bg);
-            color: white; border: 1px solid rgba(255, 255, 255, 0.2);
-            padding: 8px 15px; border-radius: 8px;
-            backdrop-filter: blur(10px);
-            transition: all 0.3s;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.15);
+            color: white; border: none;
+            padding: 8px 14px; border-radius: 20px;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            font-size: 13px; font-weight: 500;
+            transition: all 0.2s;
         }
-        #toggle-ui:hover { opacity: 1; background: rgba(255, 255, 255, 0.2); }
+        #toggle-ui:hover { background: rgba(255, 255, 255, 0.25); }
 
         #player-view { position: relative; z-index: 2; margin-top: 30px; }
         
@@ -55,55 +57,81 @@
             background-color: #222;
         }
 
-        #track-name { font-size: 24px; text-shadow: 0 2px 10px rgba(0,0,0,0.8); margin: 10px 0; word-wrap: break-word;}
-        #status { font-weight: 300; opacity: 0.8; letter-spacing: 1px; margin-bottom: 20px; text-transform: uppercase; font-size: 14px; }
+        #track-name { font-size: 24px; font-weight: 600; text-shadow: 0 2px 10px rgba(0,0,0,0.8); margin: 10px 0 4px; word-wrap: break-word;}
+        #status { font-weight: 400; opacity: 0.6; margin-bottom: 0; font-size: 14px; min-height: 20px; }
+
+        #progress-wrap { max-width: 320px; margin: 24px auto 20px; }
+        #progress-time {
+            display: flex; justify-content: space-between;
+            font-size: 11px; opacity: 0.4; margin-bottom: 6px;
+            font-variant-numeric: tabular-nums;
+        }
+        #progress-track {
+            height: 3px; border-radius: 2px;
+            background: rgba(255,255,255,0.15);
+            overflow: hidden;
+        }
+        #progress-fill {
+            height: 100%; width: 0%;
+            background: rgba(255,255,255,0.7);
+            border-radius: 2px;
+        }
+
+        .waveform { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; vertical-align: middle; }
+        .waveform span {
+            display: block; width: 3px; border-radius: 2px;
+            background: rgba(255,255,255,0.7);
+            animation: wave 1s ease-in-out infinite;
+        }
+        .waveform span:nth-child(1) { height: 5px;  animation-delay: 0s; }
+        .waveform span:nth-child(2) { height: 10px; animation-delay: 0.15s; }
+        .waveform span:nth-child(3) { height: 14px; animation-delay: 0.3s; }
+        .waveform span:nth-child(4) { height: 10px; animation-delay: 0.45s; }
+        .waveform span:nth-child(5) { height: 5px;  animation-delay: 0.6s; }
+        @keyframes wave {
+            0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
+            50%       { transform: scaleY(1);   opacity: 1; }
+        }
 
         .content { position: relative; z-index: 1; transition: opacity 0.5s ease; padding-top: 10px; }
         .hidden { display: none !important; }
 
-        #action-area {
-            height: 50px;
-            margin-bottom: 30px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 15px;
-        }
+        #start-btn, #next-btn { display: block; margin: 20px auto 0; min-width: 0; padding: 8px 28px; font-size: 15px; }
+        #status { margin-top: 12px; }
 
         .btn {
             min-width: 140px;
             padding: 12px 24px;
             font-size: 16px;
             font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 1px;
             cursor: pointer;
-            border-radius: 8px;
+            border-radius: 12px;
+            border: none;
             backdrop-filter: blur(10px);
-            transition: all 0.3s ease;
+            -webkit-backdrop-filter: blur(10px);
+            transition: all 0.2s ease;
             touch-action: manipulation;
         }
+        .btn:active { transform: scale(0.97); }
 
         .btn-primary {
-            background: var(--primary-color);
-            border: 1px solid var(--primary-border);
-            color: white;
+            background: rgba(255, 255, 255, 0.85);
+            color: #111;
         }
-        .btn-primary:hover { background: rgba(255, 0, 0, 0.25); border-color: rgba(255, 0, 0, 0.5); }
+        .btn-primary:hover { background: white; }
 
         .btn-secondary {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.15);
             color: white;
         }
-        .btn-secondary:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.4); }
+        .btn-secondary:hover { background: rgba(255, 255, 255, 0.25); }
 
-        .grid { 
-            display: grid; 
-            grid-template-columns: 1fr 1fr; 
-            gap: 20px; 
-            max-width: 900px; 
-            margin: 0 auto; 
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            width: 65%;
+            margin: 0 auto;
             text-align: left;
         }
 
@@ -113,13 +141,14 @@
             -webkit-backdrop-filter: blur(80px);
             padding: 15px;
             border-radius: 16px;
-            height: 500px;
+            height: 55vh;
             display: flex;
             flex-direction: column;
             border: 1px solid rgba(255,255,255,0.2);
             box-shadow: 0 15px 50px rgba(0, 0, 0, 0.4);
             transition: transform 0.3s ease;
         }
+        .list-box h3 { text-transform: uppercase; font-size: 11px; letter-spacing: 0.08em; opacity: 0.5; }
 
         #library-list, #queue-list { overflow-y: auto; flex-grow: 1; margin-top: 10px; padding-right: 5px; }
         
@@ -148,51 +177,53 @@
         }
 
         #search-input {
-            width: 100%; padding: 12px; margin-bottom: 10px; box-sizing: border-box;
-            background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 8px; font-size: 14px;
+            width: 100%; padding: 10px 12px; margin-bottom: 10px; box-sizing: border-box;
+            background: rgba(255,255,255,0.1); color: white; border: none;
+            border-radius: 10px; font-size: 14px;
         }
-        #search-input:focus { outline: none; border-color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.15); }
+        #search-input::placeholder { color: rgba(255,255,255,0.4); }
+        #search-input:focus { outline: none; background: rgba(255,255,255,0.18); }
 
         /* Mobile Specifics */
-        #mobile-tabs { display: none; margin-bottom: 15px; justify-content: center; gap: 10px; }
+        #mobile-tabs {
+            display: none; margin-bottom: 15px; justify-content: center;
+            background: rgba(255,255,255,0.1);
+            border-radius: 9px; padding: 2px;
+            width: fit-content; margin-left: auto; margin-right: auto;
+        }
         .tab-btn {
-            padding: 10px 20px;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
-            color: #aaa;
-            border-radius: 20px;
+            padding: 7px 24px;
+            background: transparent;
+            border: none;
+            color: rgba(255,255,255,0.6);
+            border-radius: 7px;
             cursor: pointer;
-            font-weight: 600;
+            font-weight: 500;
             font-size: 14px;
-            flex: 1;
-            max-width: 150px;
+            transition: all 0.2s;
         }
         .tab-btn.active {
             background: rgba(255,255,255,0.2);
             color: white;
-            border-color: rgba(255,255,255,0.3);
         }
 
         @media (max-width: 768px) {
-            body { padding: 10px; }
+            body { padding: 16px; }
             #player-view { margin-top: 10px; }
             #main-art { max-width: 260px; }
-            .grid { display: block; }
+            .grid { display: block; width: 100%; }
             
             #mobile-tabs { display: flex; }
             
             .list-box {
-                height: auto;
-                min-height: 400px;
-                max-height: 60vh;
+                height: 70vh;
+                box-sizing: border-box;
                 margin-bottom: 80px; /* Space for bottom interaction */
             }
             
             .mobile-hidden { display: none !important; }
             
-            #action-area { flex-direction: column; height: auto; gap: 10px; }
-            .btn { width: 100%; }
+            #start-btn, #next-btn { width: 100%; }
         }
     </style>
 </head>
@@ -203,15 +234,16 @@
 <div id="player-view">
     <div id="main-art"></div>
     <h3 id="track-name">Loading...</h3>
+    <div id="progress-wrap">
+        <div id="progress-time"><span id="time-elapsed">0:00</span><span id="time-remaining">0:00</span></div>
+        <div id="progress-track"><div id="progress-fill"></div></div>
+    </div>
+    <button id="start-btn" onclick="initSystem()" class="btn btn-primary">Join</button>
+    <button id="next-btn" onclick="skipTrack()" class="btn btn-secondary hidden">Next</button>
+    <h4 id="status"></h4>
 </div>
 
 <div class="content" id="main-content">
-    <h4 id="status">Waiting to join...</h4>
-
-    <div id="action-area">
-        <button id="start-btn" onclick="initSystem()" class="btn btn-primary">JOIN</button>
-        <button id="next-btn" onclick="skipTrack()" class="btn btn-secondary hidden">NEXT</button>
-    </div>
 
     <!-- Mobile Tab Navigation -->
     <div id="mobile-tabs">
