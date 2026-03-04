@@ -5,16 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"steamer/internal/metadata"
 	"steamer/internal/queue"
 	"steamer/internal/scanner"
 	"steamer/internal/subscribers"
 
-	"github.com/dhowden/tag"
 	"github.com/rs/zerolog"
 )
 
@@ -25,18 +24,20 @@ var indexHTML []byte
 var syncJS []byte
 
 type Streamer struct {
-	Queue   *queue.TrackQueue
-	Subs    *subscribers.Manager
-	Scanner scanner.LibraryScanner
-	logger  zerolog.Logger
+	Queue    *queue.TrackQueue
+	Subs     *subscribers.Manager
+	Scanner  scanner.LibraryScanner
+	Metadata *metadata.Provider
+	logger   zerolog.Logger
 }
 
-func New(scanner scanner.LibraryScanner, logger zerolog.Logger) *Streamer {
+func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog.Logger) *Streamer {
 	return &Streamer{
-		Queue:   queue.NewTrackQueue(scanner, logger),
-		Subs:    subscribers.NewManager(logger),
-		Scanner: scanner,
-		logger:  logger.With().Str("component", "streamer").Logger(),
+		Queue:    queue.NewTrackQueue(scanner, logger),
+		Subs:     subscribers.NewManager(logger),
+		Scanner:  scanner,
+		Metadata: meta,
+		logger:   logger.With().Str("component", "streamer").Logger(),
 	}
 }
 
@@ -123,7 +124,7 @@ func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, safePath)
 }
 
-// ArtHandler извлекает обложку (artwork) из файла текущего трека
+// ArtHandler теперь использует MetadataProvider
 func (s *Streamer) ArtHandler(w http.ResponseWriter, r *http.Request) {
 	state := s.Queue.GetState()
 	track := state.Name
@@ -132,37 +133,15 @@ func (s *Streamer) ArtHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	local, ok := s.Scanner.(*scanner.LocalScanner)
-	if !ok {
+	art, err := s.Metadata.GetArtwork(track)
+	if err != nil || art == nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	path := filepath.Join(local.MusicDir, filepath.Clean(track))
-	f, err := os.Open(path)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer f.Close()
-
-	m, err := tag.ReadFrom(f)
-	if err != nil {
-		s.logger.Debug().Err(err).Str("track", track).Msg("No tags found in file")
-		http.NotFound(w, r)
-		return
-	}
-
-	pic := m.Picture()
-	if pic == nil {
-		s.logger.Debug().Str("track", track).Msg("No picture found in tags")
-		http.NotFound(w, r)
-		return
-	}
-
-	w.Header().Set("Content-Type", pic.MIMEType)
+	w.Header().Set("Content-Type", art.MIMEType)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
-	w.Write(pic.Data)
+	w.Write(art.Data)
 }
 
 func (s *Streamer) SkipTrackHandler(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +151,7 @@ func (s *Streamer) SkipTrackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state := s.Queue.GetState()
-	if state.PlayAt-time.Now().UnixMilli() > 4500 {
+	if time.Now().UnixMilli()-state.PlayAt < 500 {
 		s.logger.Warn().Msg("Skip too frequent")
 		return
 	}

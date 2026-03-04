@@ -10,6 +10,7 @@ let audioCtx;
 let currentSource;
 let serverOffset = 0;
 let currentTrackName = "";
+let currentPlayAt = 0;
 let abortController = null;
 let currentQueue = [];
 let allLibraryFiles = [];
@@ -52,7 +53,7 @@ function connectSSE() {
         currentQueue = data.queue || [];
         renderQueue();
 
-        if (data.name === currentTrackName) return;
+        if (data.play_at === currentPlayAt) return;
 
         if (currentSource) {
             currentSource.stop();
@@ -66,11 +67,11 @@ function connectSSE() {
         abortController = new AbortController();
         const signal = abortController.signal;
 
+        currentPlayAt = data.play_at;
         currentTrackName = data.name;
         trackNameEl.innerText = "Downloading: " + data.name;
 
-        // Обновляем обложку: и фон, и центральный блок
-        const artUrl = `/art?t=${Date.now()}`;
+        const artUrl = `/art?track=${encodeURIComponent(data.name)}`;
         document.getElementById('bg-art').style.backgroundImage = `url('${artUrl}')`;
         document.getElementById('main-art').style.backgroundImage = `url('${artUrl}')`;
 
@@ -79,7 +80,7 @@ function connectSSE() {
             const arrayBuffer = await response.arrayBuffer();
             const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
-            if (currentTrackName !== data.name) return;
+            if (currentPlayAt !== data.play_at) return;
 
             schedulePlayback(audioBuffer, data.play_at, data.name);
         } catch (err) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"steamer/internal/logger"
+	"steamer/internal/metadata"
 	"steamer/internal/scanner"
 	"steamer/internal/streamer"
 
@@ -20,8 +21,11 @@ func main() {
 	l := logger.Init(*verbose)
 	log.Logger = l
 
-	localScanner := scanner.NewLocalScanner("/home/drive/sync/music", l)
-	s := streamer.New(localScanner, l)
+	musicDir := "/home/drive/sync/music"
+
+	localScanner := scanner.NewLocalScanner(musicDir, l)
+	metaProvider := metadata.NewProvider(musicDir, l)
+	s := streamer.New(localScanner, metaProvider, l)
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -33,7 +37,7 @@ func main() {
 	http.HandleFunc("/time", s.TimeHandler)
 	http.HandleFunc("/events", s.EventsHandler)
 	http.HandleFunc("/audio", s.AudioHandler)
-	http.HandleFunc("/art", s.ArtHandler) // Новый роут для обложек
+	http.HandleFunc("/art", s.ArtHandler)
 	http.HandleFunc("/api/next", s.SkipTrackHandler)
 	http.HandleFunc("/api/library", s.LibraryHandler)
 	http.HandleFunc("/api/queue", s.QueueHandler)
