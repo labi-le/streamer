@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WeeWee</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #111; color: #eee; text-align: center; }
+        button { padding: 15px 30px; font-size: 18px; margin: 10px; cursor: pointer; background: #333; color: white; border: none; border-radius: 5px;}
+        button:active { background: #555; }
+        #start-btn { background: #b00; padding: 20px 40px; font-size: 24px; font-weight: bold; }
+        #controls { display: none; }
+    </style>
+</head>
+<body>
+<h2>Web Audio API Sync</h2>
+<h4 id="status">Waiting to join...</h4>
+
+<button id="start-btn" onclick="initSystem()">JOIN RADIO</button>
+
+<div id="controls">
+    <h3 id="track-name">Loading track...</h3>
+    <button onclick="skipTrack()">Next Track</button>
+</div>
+
+<script src="/sync.js"></script>
+</body>
+</html>

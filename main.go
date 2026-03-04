@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"log"
 	"math/rand"
@@ -12,6 +13,12 @@ import (
 	"time"
 )
 
+//go:embed index.html
+var indexHTML []byte
+
+//go:embed sync.js
+var syncJS []byte
+
 var (
 	musicDir     = "/home/drive/sync/music"
 	queue        []string
@@ -20,139 +27,6 @@ var (
 	subscribers  = make(map[chan string]bool)
 	mu           sync.Mutex
 )
-
-const indexHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Perfect Sync</title>
-    <style>
-        body { font-family: sans-serif; padding: 20px; background: #111; color: #eee; text-align: center; }
-        button { padding: 15px 30px; font-size: 18px; margin: 10px; cursor: pointer; background: #333; color: white; border: none; border-radius: 5px;}
-        button:active { background: #555; }
-        #start-btn { background: #b00; padding: 20px 40px; font-size: 24px; font-weight: bold; }
-        #controls { display: none; }
-    </style>
-</head>
-<body>
-    <h2>Web Audio API Sync</h2>
-    <h4 id="status">Waiting to join...</h4>
-    
-    <button id="start-btn" onclick="initSystem()">JOIN RADIO</button>
-    
-    <div id="controls">
-        <h3 id="track-name">Loading track...</h3>
-        <button onclick="skipTrack()">Next Track</button>
-    </div>
-
-    <script>
-        const statusEl = document.getElementById('status');
-        const trackNameEl = document.getElementById('track-name');
-        const startBtn = document.getElementById('start-btn');
-        const controls = document.getElementById('controls');
-
-        let audioCtx;
-        let currentSource;
-        let serverOffset = 0;
-        let currentTrackName = "";
-        let abortController = null;
-
-        async function initSystem() {
-            startBtn.style.display = 'none';
-            statusEl.innerText = "Syncing clocks...";
-            
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
-            }
-
-            const offsets = [];
-            for (let i = 0; i < 5; i++) {
-                const t0 = Date.now();
-                const res = await fetch('/time');
-                const t1 = Date.now();
-                const serverTime = parseInt(await res.text());
-                const latency = (t1 - t0) / 2;
-                offsets.push(serverTime - latency - t0);
-            }
-            serverOffset = offsets.reduce((a, b) => a + b) / offsets.length;
-
-            controls.style.display = 'block';
-            statusEl.innerText = "Synchronized";
-            connectSSE();
-        }
-
-        function connectSSE() {
-            const events = new EventSource('/events');
-            events.onmessage = async (e) => {
-                const data = JSON.parse(e.data);
-                if (data.name === currentTrackName) return;
-
-                if (currentSource) {
-                    currentSource.stop();
-                    currentSource.disconnect();
-                    currentSource = null;
-                }
-
-                if (abortController) {
-                    abortController.abort();
-                }
-                abortController = new AbortController();
-                const signal = abortController.signal;
-                
-                currentTrackName = data.name;
-                trackNameEl.innerText = "Downloading: " + data.name;
-
-                try {
-                    const response = await fetch('/audio', { signal });
-                    const arrayBuffer = await response.arrayBuffer();
-                    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-                    if (currentTrackName !== data.name) return;
-
-                    schedulePlayback(audioBuffer, data.play_at, data.name);
-                } catch (err) {
-                    if (err.name !== 'AbortError') {
-                        trackNameEl.innerText = "Error decoding audio";
-                    }
-                }
-            };
-        }
-
-        function schedulePlayback(buffer, playAtMs, name) {
-            if (currentSource) {
-                currentSource.stop();
-                currentSource.disconnect();
-            }
-
-            currentSource = audioCtx.createBufferSource();
-            currentSource.buffer = buffer;
-            currentSource.connect(audioCtx.destination);
-
-            const nowMs = Date.now() + serverOffset;
-            const diffSeconds = (playAtMs - nowMs) / 1000.0;
-
-            trackNameEl.innerText = "Playing: " + name;
-
-            if (diffSeconds > 0) {
-                currentSource.start(audioCtx.currentTime + diffSeconds);
-            } else {
-                currentSource.start(0, Math.abs(diffSeconds));
-            }
-
-            currentSource.onended = () => {
-                if (Date.now() + serverOffset >= playAtMs + (buffer.duration * 1000) - 500) {
-                    skipTrack();
-                }
-            };
-        }
-
-        function skipTrack() {
-            fetch('/api/next', { method: 'POST' });
-        }
-    </script>
-</body>
-</html>`
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
@@ -163,13 +37,14 @@ func main() {
 	mu.Unlock()
 
 	http.HandleFunc("/", indexHandler)
+	http.HandleFunc("/sync.js", jsHandler)
 	http.HandleFunc("/time", timeHandler)
 	http.HandleFunc("/events", eventsHandler)
 	http.HandleFunc("/audio", audioHandler)
 	http.HandleFunc("/api/next", skipTrackHandler)
 
-	fmt.Println("Server running on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	fmt.Println("Server running on http://localhost:7777")
+	log.Fatal(http.ListenAndServe(":7777", nil))
 }
 
 func loadMusicQueueInternal() {
@@ -226,7 +101,12 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(indexHTML))
+	w.Write(indexHTML)
+}
+
+func jsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Write(syncJS)
 }
 
 func timeHandler(w http.ResponseWriter, r *http.Request) {
