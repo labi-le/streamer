@@ -1,0 +1,168 @@
+package streamer
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"steamer/internal/queue"
+	"steamer/internal/scanner"
+	"steamer/internal/subscribers"
+
+	"github.com/rs/zerolog"
+)
+
+//go:embed index.html
+var indexHTML []byte
+
+//go:embed sync.js
+var syncJS []byte
+
+type Streamer struct {
+	Queue   *queue.TrackQueue
+	Subs    *subscribers.Manager
+	Scanner scanner.LibraryScanner
+	logger  zerolog.Logger
+}
+
+func New(scanner scanner.LibraryScanner, logger zerolog.Logger) *Streamer {
+	return &Streamer{
+		Queue:   queue.NewTrackQueue(scanner, logger),
+		Subs:    subscribers.NewManager(logger),
+		Scanner: scanner,
+		logger:  logger.With().Str("component", "streamer").Logger(),
+	}
+}
+
+func (s *Streamer) BroadcastState() {
+	state := s.Queue.GetState()
+	b, _ := json.Marshal(state)
+	s.Subs.Broadcast(string(b))
+}
+
+func (s *Streamer) IndexHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(indexHTML)
+}
+
+func (s *Streamer) JSHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Write(syncJS)
+}
+
+func (s *Streamer) TimeHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	fmt.Fprintf(w, "%d", time.Now().UnixMilli())
+}
+
+func (s *Streamer) EventsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch := make(chan string, 1)
+	s.Subs.Add(ch, r.RemoteAddr)
+
+	state := s.Queue.GetState()
+	b, _ := json.Marshal(state)
+
+	fmt.Fprintf(w, "data: %s\n\n", string(b))
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	defer s.Subs.Remove(ch, r.RemoteAddr)
+
+	for {
+		select {
+		case msg := <-ch:
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
+	state := s.Queue.GetState()
+	track := state.Name
+
+	if track == "" {
+		http.Error(w, "No track playing", http.StatusNotFound)
+		return
+	}
+
+	local, ok := s.Scanner.(*scanner.LocalScanner)
+	if !ok {
+		http.Error(w, "Audio serving not supported for this scanner", http.StatusNotImplemented)
+		return
+	}
+
+	safePath := filepath.Join(local.MusicDir, filepath.Clean(track))
+	if !strings.HasPrefix(safePath, filepath.Clean(local.MusicDir)) {
+		s.logger.Warn().Str("track", track).Str("remote_addr", r.RemoteAddr).Msg("Forbidden access")
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	s.logger.Debug().Str("track", track).Msg("Serving audio")
+	http.ServeFile(w, r, safePath)
+}
+
+func (s *Streamer) SkipTrackHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	state := s.Queue.GetState()
+	if time.Now().UnixMilli()-state.PlayAt < 500 {
+		s.logger.Warn().Msg("Skip too frequent")
+		return
+	}
+
+	s.logger.Info().Msg("Skip requested")
+	s.Queue.Advance(s.BroadcastState)
+}
+
+func (s *Streamer) LibraryHandler(w http.ResponseWriter, r *http.Request) {
+	files := s.Scanner.Scan()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files)
+}
+
+func (s *Streamer) QueueHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodGet {
+		state := s.Queue.GetState()
+		json.NewEncoder(w).Encode(state.Queue)
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		var items []string
+		if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+			s.logger.Error().Err(err).Msg("Decode failed")
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		s.Queue.SetItems(items, s.BroadcastState)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
+}
