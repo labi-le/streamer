@@ -33,6 +33,7 @@ func main() {
 	http.HandleFunc("/time", s.TimeHandler)
 	http.HandleFunc("/events", s.EventsHandler)
 	http.HandleFunc("/audio", s.AudioHandler)
+	http.HandleFunc("/art", s.ArtHandler) // Новый роут для обложек
 	http.HandleFunc("/api/next", s.SkipTrackHandler)
 	http.HandleFunc("/api/library", s.LibraryHandler)
 	http.HandleFunc("/api/queue", s.QueueHandler)

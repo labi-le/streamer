@@ -69,6 +69,11 @@ function connectSSE() {
         currentTrackName = data.name;
         trackNameEl.innerText = "Downloading: " + data.name;
 
+        // Обновляем обложку: и фон, и центральный блок
+        const artUrl = `/art?t=${Date.now()}`;
+        document.getElementById('bg-art').style.backgroundImage = `url('${artUrl}')`;
+        document.getElementById('main-art').style.backgroundImage = `url('${artUrl}')`;
+
         try {
             const response = await fetch('/audio', { signal });
             const arrayBuffer = await response.arrayBuffer();
@@ -182,4 +187,9 @@ async function removeFromQueue(index) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newQueue)
     });
+}
+
+function toggleUI() {
+    const content = document.getElementById('main-content');
+    content.classList.toggle('hidden');
 }

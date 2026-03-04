@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"steamer/internal/scanner"
 	"steamer/internal/subscribers"
 
+	"github.com/dhowden/tag"
 	"github.com/rs/zerolog"
 )
 
@@ -121,6 +123,48 @@ func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, safePath)
 }
 
+// ArtHandler извлекает обложку (artwork) из файла текущего трека
+func (s *Streamer) ArtHandler(w http.ResponseWriter, r *http.Request) {
+	state := s.Queue.GetState()
+	track := state.Name
+	if track == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	local, ok := s.Scanner.(*scanner.LocalScanner)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	path := filepath.Join(local.MusicDir, filepath.Clean(track))
+	f, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+
+	m, err := tag.ReadFrom(f)
+	if err != nil {
+		s.logger.Debug().Err(err).Str("track", track).Msg("No tags found in file")
+		http.NotFound(w, r)
+		return
+	}
+
+	pic := m.Picture()
+	if pic == nil {
+		s.logger.Debug().Str("track", track).Msg("No picture found in tags")
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", pic.MIMEType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Write(pic.Data)
+}
+
 func (s *Streamer) SkipTrackHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -128,7 +172,7 @@ func (s *Streamer) SkipTrackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state := s.Queue.GetState()
-	if time.Now().UnixMilli()-state.PlayAt < 500 {
+	if state.PlayAt-time.Now().UnixMilli() > 4500 {
 		s.logger.Warn().Msg("Skip too frequent")
 		return
 	}
