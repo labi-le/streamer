@@ -30,100 +30,33 @@ func NewTrackQueue(scanner scanner.LibraryScanner, logger zerolog.Logger) *Track
 		logger:  logger.With().Str("component", "queue").Logger(),
 	}
 	q.state.Store(&State{Queue: []string{}})
-
-	go q.watchQueue()
-
 	return q
-}
-
-func (q *TrackQueue) watchQueue() {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		q.fillQueue()
-	}
-}
-
-func (q *TrackQueue) fillQueue() {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	curr := q.state.Load()
-	if len(curr.Queue) >= 10 {
-		return
-	}
-
-	allFiles := q.scanner.Scan()
-	if len(allFiles) == 0 {
-		return
-	}
-
-	exists := make(map[string]bool)
-	exists[curr.Name] = true
-	for _, t := range curr.Queue {
-		exists[t] = true
-	}
-
-	var available []string
-	for _, f := range allFiles {
-		if !exists[f] {
-			available = append(available, f)
-		}
-	}
-
-	if len(available) == 0 {
-		available = make([]string, len(allFiles))
-		copy(available, allFiles)
-	}
-
-	q.shuffle(available)
-
-	needed := 10 - len(curr.Queue)
-	if needed > len(available) {
-		needed = len(available)
-	}
-
-	newQueue := make([]string, len(curr.Queue), len(curr.Queue)+needed)
-	copy(newQueue, curr.Queue)
-	newQueue = append(newQueue, available[:needed]...)
-
-	q.state.Store(&State{
-		Name:   curr.Name,
-		PlayAt: curr.PlayAt,
-		Queue:  newQueue,
-	})
-
-	q.logger.Debug().Int("added", needed).Int("total", len(newQueue)).Msg("queue topped up")
 }
 
 func (q *TrackQueue) GetState() State {
 	return *q.state.Load()
 }
 
-func (q *TrackQueue) Init() {
-	q.fillQueue()
-}
-
 func (q *TrackQueue) Advance(onDone func()) {
 	q.mu.Lock()
 
 	curr := q.state.Load()
-	items := curr.Queue
-
 	newState := &State{
 		PlayAt: time.Now().UnixMilli() + 5000,
 		Queue:  []string{},
 	}
 
-	if len(items) > 0 {
-		newState.Name = items[0]
-		newState.Queue = items[1:]
-		q.logger.Info().Str("track", newState.Name).Int("remaining", len(newState.Queue)).Msg("advancing track")
+	if len(curr.Queue) > 0 {
+		newState.Name = curr.Queue[0]
+		newState.Queue = curr.Queue[1:]
 	} else {
-		q.logger.Warn().Msg("advance called but queue is empty")
+		allFiles := q.scanner.Scan()
+		if len(allFiles) > 0 {
+			newState.Name = allFiles[rand.Intn(len(allFiles))]
+		}
 	}
 
+	q.logger.Info().Str("track", newState.Name).Msg("advancing track")
 	q.state.Store(newState)
 	q.mu.Unlock()
 

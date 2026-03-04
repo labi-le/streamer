@@ -2,10 +2,7 @@ package main
 
 import (
 	"flag"
-	"math/rand"
 	"net/http"
-	"time"
-
 	"steamer/internal/logger"
 	"steamer/internal/metadata"
 	"steamer/internal/scanner"
@@ -15,21 +12,17 @@ import (
 )
 
 func main() {
-	verbose := flag.Bool("v", true, "verbose output")
+	verbose := *flag.Bool("v", true, "verbose output")
+	musicDir := *flag.String("path", "/home/drive/sync/music", "streaming path")
 	flag.Parse()
 
-	l := logger.Init(*verbose)
+	l := logger.Init(verbose)
 	log.Logger = l
-
-	musicDir := "/home/drive/sync/music"
 
 	localScanner := scanner.NewLocalScanner(musicDir, l)
 	metaProvider := metadata.NewProvider(musicDir, l)
 	s := streamer.New(localScanner, metaProvider, l)
 
-	rand.Seed(time.Now().UnixNano())
-
-	s.Queue.Init()
 	s.Queue.Advance(s.BroadcastState)
 
 	http.HandleFunc("/", s.IndexHandler)
