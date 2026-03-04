@@ -4,9 +4,11 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"steamer/internal/metadata"
@@ -24,11 +26,12 @@ var indexHTML []byte
 var syncJS []byte
 
 type Streamer struct {
-	Queue    *queue.TrackQueue
-	Subs     *subscribers.Manager
-	Scanner  scanner.LibraryScanner
-	Metadata *metadata.Provider
-	logger   zerolog.Logger
+	Queue      *queue.TrackQueue
+	Subs       *subscribers.Manager
+	Scanner    scanner.LibraryScanner
+	Metadata   *metadata.Provider
+	logger     zerolog.Logger
+	rateLimits sync.Map
 }
 
 func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog.Logger) *Streamer {
@@ -48,6 +51,49 @@ func (s *Streamer) LoggerMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			Str("path", r.URL.Path).
 			Str("remote_addr", r.RemoteAddr).
 			Msg("API Request")
+		next(w, r)
+	}
+}
+
+func (s *Streamer) RateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			next(w, r)
+			return
+		}
+
+		ipStr := r.Header.Get("X-Real-IP")
+		if ipStr == "" {
+			ipStr = r.Header.Get("X-Forwarded-For")
+			if ipStr != "" {
+				ipStr = strings.TrimSpace(strings.Split(ipStr, ",")[0])
+			}
+		}
+		if ipStr == "" {
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				ipStr = r.RemoteAddr
+			} else {
+				ipStr = host
+			}
+		}
+
+		ip := net.ParseIP(ipStr)
+		if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
+			next(w, r)
+			return
+		}
+
+		if val, ok := s.rateLimits.Load(ipStr); ok {
+			lastSeen := val.(time.Time)
+			if time.Since(lastSeen) < 5*time.Second {
+				s.logger.Warn().Str("ip", ipStr).Msg("Rate limit exceeded")
+				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				return
+			}
+		}
+
+		s.rateLimits.Store(ipStr, time.Now())
 		next(w, r)
 	}
 }
@@ -135,7 +181,6 @@ func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, safePath)
 }
 
-// ArtHandler теперь использует MetadataProvider
 func (s *Streamer) ArtHandler(w http.ResponseWriter, r *http.Request) {
 	state := s.Queue.GetState()
 	track := state.Name
