@@ -3,6 +3,7 @@ package metadata
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/dhowden/tag"
 	"github.com/rs/zerolog"
@@ -26,8 +27,15 @@ func NewProvider(baseDir string, logger zerolog.Logger) *Provider {
 }
 
 func (p *Provider) GetArtwork(filename string) (*Artwork, error) {
-	path := filepath.Join(p.baseDir, filepath.Clean(filename))
-	f, err := os.Open(path)
+	cleanBase := filepath.Clean(p.baseDir)
+	targetPath := filepath.Join(cleanBase, filepath.Clean(filename))
+
+	if !strings.HasPrefix(targetPath, cleanBase+string(filepath.Separator)) {
+		p.logger.Warn().Str("file", filename).Msg("Path traversal attempt blocked")
+		return nil, os.ErrNotExist
+	}
+
+	f, err := os.Open(targetPath)
 	if err != nil {
 		return nil, err
 	}

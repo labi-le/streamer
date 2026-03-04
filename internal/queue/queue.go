@@ -136,6 +136,12 @@ func (q *TrackQueue) AppendItem(item string, onDone func()) {
 	q.mu.Lock()
 	curr := q.state.Load()
 
+	if len(curr.Queue) >= 200 {
+		q.logger.Warn().Msg("Queue limit reached, rejecting item")
+		q.mu.Unlock()
+		return
+	}
+
 	newQueue := make([]string, len(curr.Queue), len(curr.Queue)+1)
 	copy(newQueue, curr.Queue)
 	newQueue = append(newQueue, item)

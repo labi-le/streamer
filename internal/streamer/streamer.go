@@ -46,22 +46,11 @@ func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog
 }
 
 func getIP(r *http.Request) string {
-	ipStr := r.Header.Get("X-Real-IP")
-	if ipStr == "" {
-		ipStr = r.Header.Get("X-Forwarded-For")
-		if ipStr != "" {
-			ipStr = strings.TrimSpace(strings.Split(ipStr, ",")[0])
-		}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
 	}
-	if ipStr == "" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			ipStr = r.RemoteAddr
-		} else {
-			ipStr = host
-		}
-	}
-	return ipStr
+	return host
 }
 
 type loggingResponseWriter struct {
@@ -305,26 +294,29 @@ func (s *Streamer) QueueHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if !s.Scanner.Exists(cmd.Track) {
-			ipStr := getIP(r)
-			s.flaggedIPs.Store(ipStr, struct{}{})
+		switch cmd.Action {
+		case "add":
+			if !s.Scanner.Exists(cmd.Track) {
+				ipStr := getIP(r)
+				s.flaggedIPs.Store(ipStr, struct{}{})
 
-			s.logger.Warn().
-				Str("invalid_track", cmd.Track).
-				Str("ip", ipStr).
-				Msg("Malicious input detected, IP flagged for screamer")
+				s.logger.Warn().
+					Str("invalid_track", cmd.Track).
+					Str("ip", ipStr).
+					Msg("Malicious input detected, IP flagged for screamer")
 
-			w.WriteHeader(http.StatusTeapot)
-			w.Write([]byte(`pidOr`))
-			return
-		}
-
-		if cmd.Action == "add" {
+				w.WriteHeader(http.StatusTeapot)
+				w.Write([]byte(`pidOr`))
+				return
+			}
 			s.Queue.AppendItem(cmd.Track, s.BroadcastState)
-		}
 
-		if cmd.Action == "remove" {
+		case "remove":
 			s.Queue.RemoveItem(cmd.Index, s.BroadcastState)
+
+		default:
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
 		}
 
 		w.WriteHeader(http.StatusOK)
