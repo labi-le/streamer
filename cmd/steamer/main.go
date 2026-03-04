@@ -34,18 +34,14 @@ func main() {
 
 	http.HandleFunc("/", s.IndexHandler)
 	http.HandleFunc("/sync.js", s.JSHandler)
-	http.HandleFunc("/time", s.TimeHandler)
-	http.HandleFunc("/events", s.EventsHandler)
-	http.HandleFunc("/audio", s.AudioHandler)
 	http.HandleFunc("/art", s.ArtHandler)
-	http.HandleFunc("/api/next", s.SkipTrackHandler)
-	http.HandleFunc("/api/library", s.LibraryHandler)
-	http.HandleFunc("/api/queue", s.QueueHandler)
-	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/x-icon")
-		w.Header().Set("Content-Length", "0")
-		w.WriteHeader(http.StatusNoContent)
-	})
+
+	http.HandleFunc("/time", s.LoggerMiddleware(s.TimeHandler))
+	http.HandleFunc("/events", s.LoggerMiddleware(s.EventsHandler))
+	http.HandleFunc("/audio", s.LoggerMiddleware(s.AudioHandler))
+	http.HandleFunc("/api/next", s.LoggerMiddleware(s.SkipTrackHandler))
+	http.HandleFunc("/api/library", s.LoggerMiddleware(s.LibraryHandler))
+	http.HandleFunc("/api/queue", s.LoggerMiddleware(s.QueueHandler))
 
 	l.Info().Msg("Server running on http://localhost:7777")
 	if err := http.ListenAndServe(":7777", nil); err != nil {

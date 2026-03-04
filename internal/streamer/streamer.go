@@ -41,6 +41,17 @@ func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog
 	}
 }
 
+func (s *Streamer) LoggerMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.logger.Info().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Str("remote_addr", r.RemoteAddr).
+			Msg("API Request")
+		next(w, r)
+	}
+}
+
 func (s *Streamer) BroadcastState() {
 	state := s.Queue.GetState()
 	b, _ := json.Marshal(state)

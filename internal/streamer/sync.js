@@ -1,7 +1,7 @@
 const statusEl = document.getElementById('status');
 const trackNameEl = document.getElementById('track-name');
 const startBtn = document.getElementById('start-btn');
-const controls = document.getElementById('controls');
+const nextBtn = document.getElementById('next-btn');
 const libraryListEl = document.getElementById('library-list');
 const queueListEl = document.getElementById('queue-list');
 const searchInput = document.getElementById('search-input');
@@ -20,7 +20,7 @@ loadLibrary();
 connectSSE();
 
 async function initSystem() {
-    startBtn.style.display = 'none';
+    startBtn.classList.add('hidden');
     statusEl.innerText = "Syncing clocks...";
 
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -42,7 +42,7 @@ async function initSystem() {
     samples.sort((a, b) => a.rtt - b.rtt);
     serverOffset = samples[0].offset;
 
-    controls.style.display = 'block';
+    nextBtn.classList.remove('hidden');
     statusEl.innerText = "Synchronized";
     audioEnabled = true;
 
