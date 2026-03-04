@@ -41,6 +41,11 @@ func main() {
 	http.HandleFunc("/api/next", s.SkipTrackHandler)
 	http.HandleFunc("/api/library", s.LibraryHandler)
 	http.HandleFunc("/api/queue", s.QueueHandler)
+	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusNoContent)
+	})
 
 	l.Info().Msg("Server running on http://localhost:7777")
 	if err := http.ListenAndServe(":7777", nil); err != nil {
