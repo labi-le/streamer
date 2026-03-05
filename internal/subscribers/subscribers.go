@@ -1,42 +1,38 @@
 package subscribers
 
 import (
-	"sync"
+	"steamer/pkg/storage"
 
 	"github.com/rs/zerolog"
 )
 
 type Manager struct {
-	subscribers sync.Map
+	subscribers *storage.SyncMap[chan string, struct{}]
 	logger      zerolog.Logger
 }
 
 func NewManager(logger zerolog.Logger) *Manager {
 	return &Manager{
-		logger: logger.With().Str("component", "subscribers").Logger(),
+		subscribers: storage.NewSyncMapStorage[chan string, struct{}](),
+		logger:      logger.With().Str("component", "subscribers").Logger(),
 	}
 }
 
-func (s *Manager) Add(ch chan string, remoteAddr string) {
-	s.subscribers.Store(ch, struct{}{})
-	s.logger.Info().Str("remote_addr", remoteAddr).Msg("new subscriber connected")
+func (s *Manager) Add(ch chan string) {
+	s.subscribers.Add(ch, struct{}{})
 }
 
-func (s *Manager) Remove(ch chan string, remoteAddr string) {
+func (s *Manager) Remove(ch chan string) {
 	s.subscribers.Delete(ch)
-	s.logger.Info().Str("remote_addr", remoteAddr).Msg("subscriber disconnected")
 }
 
 func (s *Manager) Count() int {
-	n := 0
-	s.subscribers.Range(func(_, _ any) bool { n++; return true })
-	return n
+	return s.subscribers.Len()
 }
 
 func (s *Manager) Broadcast(msg string) {
-	s.logger.Debug().Msg("broadcasting state to subscribers")
-	s.subscribers.Range(func(key, value interface{}) bool {
-		ch := key.(chan string)
+	s.logger.Trace().Msg("broadcasting state to subscribers")
+	s.subscribers.Tap(func(ch chan string, _ struct{}) bool {
 		select {
 		case ch <- msg:
 		default:

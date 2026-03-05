@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"path/filepath"
-	"sync"
 	"time"
 
 	"steamer/internal/metadata"
 	"steamer/internal/queue"
 	"steamer/internal/scanner"
 	"steamer/internal/subscribers"
+	"steamer/pkg/storage"
 
 	"github.com/ferluci/fast-realip"
 	"github.com/rs/zerolog"
@@ -29,29 +28,45 @@ var syncJS []byte
 //go:embed scary.mp3
 var scaryMP3 []byte
 
+const loggerKey = "req_logger"
+
+func reqLogger(ctx *fasthttp.RequestCtx) *zerolog.Logger {
+	if log, ok := ctx.UserValue(loggerKey).(*zerolog.Logger); ok {
+		return log
+	}
+	nop := zerolog.Nop()
+	return &nop
+}
+
 type Streamer struct {
 	Queue      *queue.TrackQueue
 	Subs       *subscribers.Manager
 	Scanner    scanner.LibraryScanner
 	Metadata   *metadata.Provider
 	logger     zerolog.Logger
-	rateLimits sync.Map
-	flaggedIPs sync.Map
+	rateLimits *storage.SyncMap[string, time.Time]
+	flaggedIPs *storage.SyncMap[string, struct{}]
 }
 
 func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog.Logger) *Streamer {
 	return &Streamer{
-		Queue:    queue.NewTrackQueue(scanner, logger),
-		Subs:     subscribers.NewManager(logger),
-		Scanner:  scanner,
-		Metadata: meta,
-		logger:   logger.With().Str("component", "streamer").Logger(),
+		Queue:      queue.NewTrackQueue(scanner, logger),
+		Subs:       subscribers.NewManager(logger),
+		Scanner:    scanner,
+		Metadata:   meta,
+		logger:     logger.With().Str("component", "streamer").Logger(),
+		rateLimits: storage.NewSyncMapStorage[string, time.Time](),
+		flaggedIPs: storage.NewSyncMapStorage[string, struct{}](),
 	}
 }
 
 func (s *Streamer) LoggerMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		start := time.Now()
+		ip := realip.FromRequest(ctx)
+
+		reqLog := s.logger.With().Str("ip", ip).Logger()
+		ctx.SetUserValue(loggerKey, &reqLog)
 
 		next(ctx)
 
@@ -60,10 +75,9 @@ func (s *Streamer) LoggerMiddleware(next fasthttp.RequestHandler) fasthttp.Reque
 			size = len(ctx.Response.Body())
 		}
 
-		s.logger.Trace().
+		reqLog.Trace().
 			Str("method", string(ctx.Method())).
 			Str("path", string(ctx.Path())).
-			Str("ip", realip.FromRequest(ctx)).
 			Int("status", ctx.Response.StatusCode()).
 			Int("size", size).
 			Dur("duration", time.Since(start)).
@@ -73,11 +87,6 @@ func (s *Streamer) LoggerMiddleware(next fasthttp.RequestHandler) fasthttp.Reque
 
 func (s *Streamer) RateLimitMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
-		if string(ctx.Method()) != fasthttp.MethodPost {
-			next(ctx)
-			return
-		}
-
 		rawIP := realip.FromRequest(ctx)
 		if rawIP == "" {
 			return
@@ -89,17 +98,16 @@ func (s *Streamer) RateLimitMiddleware(next fasthttp.RequestHandler) fasthttp.Re
 			return
 		}
 
-		if val, ok := s.rateLimits.Load(rawIP); ok {
-			lastSeen := val.(time.Time)
+		if lastSeen, ok := s.rateLimits.Get(rawIP); ok {
 			if time.Since(lastSeen) < 5*time.Second {
-				s.logger.Warn().Str("ip", rawIP).Msg("rate limit exceeded")
+				reqLogger(ctx).Warn().Msg("rate limit exceeded")
 				ctx.SetStatusCode(fasthttp.StatusTooManyRequests)
 				return
 			}
 			s.rateLimits.Delete(rawIP)
 		}
 
-		s.rateLimits.Store(rawIP, time.Now())
+		s.rateLimits.Add(rawIP, time.Now())
 		next(ctx)
 	}
 }
@@ -110,8 +118,10 @@ type broadcastPayload struct {
 }
 
 func (s *Streamer) marshalState() []byte {
-	state := s.Queue.GetState()
-	b, _ := json.Marshal(broadcastPayload{state, s.Subs.Count()})
+	b, _ := json.Marshal(broadcastPayload{
+		s.Queue.GetState(),
+		s.Subs.Count(),
+	})
 	return b
 }
 
@@ -143,20 +153,24 @@ func (s *Streamer) EventsHandler(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Set("Cache-Control", "no-cache")
 	ctx.Response.Header.Set("Connection", "keep-alive")
 
-	ipStr := realip.FromRequest(ctx)
+	logger := reqLogger(ctx)
+
 	ch := make(chan string, 1)
-	s.Subs.Add(ch, ipStr)
+	s.Subs.Add(ch)
+	logger.Trace().Msg("new subscriber connected")
+
 	s.BroadcastState()
 
 	initialState := s.marshalState()
 
 	ctx.SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer func() {
-			s.Subs.Remove(ch, ipStr)
+			s.Subs.Remove(ch)
 			s.BroadcastState()
+			logger.Trace().Msg("subscriber disconnected")
 		}()
 
-		fmt.Fprintf(w, "data: %s\n\n", initialState)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", initialState)
 		if err := w.Flush(); err != nil {
 			return
 		}
@@ -167,12 +181,12 @@ func (s *Streamer) EventsHandler(ctx *fasthttp.RequestCtx) {
 		for {
 			select {
 			case msg := <-ch:
-				fmt.Fprintf(w, "data: %s\n\n", msg)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", msg)
 				if err := w.Flush(); err != nil {
 					return
 				}
 			case <-ticker.C:
-				fmt.Fprintf(w, ": ping\n\n")
+				_, _ = fmt.Fprintf(w, ": ping\n\n")
 				if err := w.Flush(); err != nil {
 					return
 				}
@@ -182,7 +196,7 @@ func (s *Streamer) EventsHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Streamer) AudioHandler(ctx *fasthttp.RequestCtx) {
-	if _, flagged := s.flaggedIPs.Load(realip.FromRequest(ctx)); flagged {
+	if s.flaggedIPs.Exist(realip.FromRequest(ctx)) {
 		ctx.Response.Header.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		ctx.SetContentType("audio/mpeg")
 		ctx.SetBody(scaryMP3)
@@ -190,22 +204,14 @@ func (s *Streamer) AudioHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	state := s.Queue.GetState()
-	track := state.Name
-
-	if track == "" {
+	if state.Name == "" {
 		ctx.Error("No track playing", fasthttp.StatusNotFound)
 		return
 	}
 
-	local, ok := s.Scanner.(*scanner.LocalScanner)
-	if !ok {
-		ctx.Error("Audio serving not supported for this scanner", fasthttp.StatusNotImplemented)
-		return
-	}
-
 	ctx.Response.Header.Set("Cache-Control", "no-store, no-cache, must-revalidate")
-	s.logger.Debug().Str("track", track).Msg("serving audio")
-	fasthttp.ServeFile(ctx, filepath.Join(local.MusicDir, track))
+	reqLogger(ctx).Trace().Str("track", state.Name).Msg("serving audio")
+	fasthttp.ServeFile(ctx, s.Scanner.SelectFile(state.Name))
 }
 
 func (s *Streamer) ArtHandler(ctx *fasthttp.RequestCtx) {
@@ -233,7 +239,7 @@ func (s *Streamer) SkipTrackHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	s.logger.Info().Str("ip", realip.FromRequest(ctx)).Msg("skip requested")
+	reqLogger(ctx).Info().Msg("skip requested")
 	s.Queue.Advance(s.BroadcastState)
 }
 
@@ -275,11 +281,10 @@ func (s *Streamer) QueueHandler(ctx *fasthttp.RequestCtx) {
 		case ActionAdd:
 			if !s.Scanner.Exists(cmd.Track) {
 				ip := realip.FromRequest(ctx)
-				s.flaggedIPs.Store(ip, struct{}{})
+				s.flaggedIPs.Add(ip, struct{}{})
 
-				s.logger.Warn().
+				reqLogger(ctx).Warn().
 					Str("invalid_track", cmd.Track).
-					Str("ip", ip).
 					Msg("malicious input detected, ip flagged")
 
 				ctx.SetStatusCode(fasthttp.StatusTeapot)

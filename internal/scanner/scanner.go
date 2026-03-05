@@ -13,6 +13,7 @@ import (
 type LibraryScanner interface {
 	Scan() []string
 	Exists(track string) bool
+	SelectFile(track string) string
 }
 
 type LocalScanner struct {
@@ -84,6 +85,10 @@ func (s *LocalScanner) Scan() []string {
 	cpy := make([]string, len(s.cache))
 	copy(cpy, s.cache)
 	return cpy
+}
+
+func (s *LocalScanner) SelectFile(track string) string {
+	return filepath.Join(s.MusicDir, track)
 }
 
 func (s *LocalScanner) Exists(track string) bool {

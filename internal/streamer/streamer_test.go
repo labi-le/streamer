@@ -40,6 +40,7 @@ func (m *mockScanner) Exists(name string) bool {
 	}
 	return false
 }
+func (m *mockScanner) SelectFile(name string) string { return "/nonexistent/" + name }
 
 // newClient creates an HTTP client connected to an in-memory fasthttp server.
 // The listener is closed via t.Cleanup when the test ends.
@@ -237,18 +238,17 @@ func TestQueueHandler_GetEmpty(t *testing.T) {
 
 func TestQueueHandler_AddValidTrack(t *testing.T) {
 	track := "cool_song.mp3"
-	_, client := newTestEnv(t, &mockScanner{files: []string{track}})
+	s, client := newTestEnv(t, &mockScanner{files: []string{track}})
 
 	resp := doPost(t, client, "/api/queue", map[string]any{"action": "add", "track": track})
 	assertStatus(t, resp, 200)
 	readBody(t, resp)
 
-	resp = doGet(t, client, "/api/queue")
-	assertStatus(t, resp, 200)
-	var q []string
-	json.Unmarshal([]byte(readBody(t, resp)), &q)
-	if len(q) != 1 || q[0] != track {
-		t.Errorf("queue after add: got %v, want [%q]", q, track)
+	// Verify via state directly: a second HTTP request to the same endpoint would
+	// be rate-limited (same "pipe" remote addr within 5 s window).
+	state := s.Queue.GetState()
+	if len(state.Queue) != 1 || state.Queue[0] != track {
+		t.Errorf("queue after add: got %v, want [%q]", state.Queue, track)
 	}
 }
 
@@ -369,17 +369,6 @@ func TestAudioHandler_RangeRequest_Returns206(t *testing.T) {
 	if len(body) != 128 {
 		t.Errorf("Range body length: got %d, want 128", len(body))
 	}
-}
-
-func TestAudioHandler_MockScanner_Returns501(t *testing.T) {
-	// mockScanner doesn't satisfy the *LocalScanner type assertion
-	sc := &mockScanner{files: []string{"track.mp3"}}
-	s, client := newTestEnv(t, sc)
-	s.Queue.Advance(s.BroadcastState)
-
-	resp := doGet(t, client, "/audio")
-	assertStatus(t, resp, 501)
-	readBody(t, resp)
 }
 
 func TestAudioHandler_FlaggedIP_ReceivesScreamer(t *testing.T) {
