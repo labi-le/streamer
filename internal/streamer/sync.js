@@ -17,16 +17,17 @@ let allLibraryFiles = [];
 let audioEnabled = false;
 let progressRaf = null;
 let currentArtUrl = null;
+
 const progressFill = document.getElementById('progress-fill');
 const timeElapsed = document.getElementById('time-elapsed');
 const timeRemaining = document.getElementById('time-remaining');
+const bgArt = document.getElementById('bg-art');
+const mainArt = document.getElementById('main-art');
 
 function fmtTime(sec) {
     const s = Math.max(0, Math.floor(sec));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
-const bgArt = document.getElementById('bg-art');
-const mainArt = document.getElementById('main-art');
 
 loadLibrary();
 connectSSE();
@@ -41,12 +42,13 @@ async function initSystem() {
 
     const samples = [];
     for (let i = 0; i < 8; i++) {
-        const t0 = Date.now();
+        const t0Perf = performance.now();
         const res = await fetch('/time');
-        const t1 = Date.now();
-        const serverTime = parseInt(await res.text());
-        const rtt = t1 - t0;
-        const offset = serverTime - (rtt / 2) - t0;
+        const text = await res.text();
+        const rtt = performance.now() - t0Perf;
+        const serverTime = parseInt(text, 10);
+
+        const offset = serverTime - (rtt / 2) - t0Perf;
         samples.push({ rtt, offset });
     }
 
@@ -83,6 +85,7 @@ function connectSSE() {
         bgArt.style.backgroundImage = '';
         mainArt.style.backgroundImage = '';
         if (currentArtUrl) { URL.revokeObjectURL(currentArtUrl); currentArtUrl = null; }
+
         fetch(`/art?track=${encodeURIComponent(data.name)}`)
             .then(res => res.ok ? res.blob() : null)
             .then(blob => {
@@ -101,6 +104,7 @@ function connectSSE() {
 
 async function fetchAndPlayAudio(playAtMs, name) {
     if (currentSource) {
+        currentSource.onended = null;
         currentSource.stop();
         currentSource.disconnect();
         currentSource = null;
@@ -174,6 +178,7 @@ async function fetchAndPlayAudio(playAtMs, name) {
 
 function schedulePlayback(buffer, playAtMs, name) {
     if (currentSource) {
+        currentSource.onended = null;
         currentSource.stop();
         currentSource.disconnect();
     }
@@ -182,7 +187,7 @@ function schedulePlayback(buffer, playAtMs, name) {
     currentSource.buffer = buffer;
     currentSource.connect(audioCtx.destination);
 
-    const nowMs = Date.now() + serverOffset;
+    const nowMs = performance.now() + serverOffset;
     const diffSeconds = (playAtMs - nowMs) / 1000.0;
 
     trackNameEl.innerText = name;
@@ -190,25 +195,36 @@ function schedulePlayback(buffer, playAtMs, name) {
     if (diffSeconds > 0) {
         currentSource.start(audioCtx.currentTime + diffSeconds);
     } else {
-        currentSource.start(0, Math.abs(diffSeconds));
+        const skipTime = Math.abs(diffSeconds);
+        if (skipTime >= buffer.duration) {
+            skipTrack();
+            return;
+        }
+        currentSource.start(0, skipTime);
     }
 
     currentSource.onended = () => {
-        if (Date.now() + serverOffset >= playAtMs + (buffer.duration * 1000) - 500) {
+        const actualNowMs = performance.now() + serverOffset;
+        if (actualNowMs >= playAtMs + (buffer.duration * 1000) - 500) {
             skipTrack();
         }
     };
 
     if (progressRaf) cancelAnimationFrame(progressRaf);
     const duration = buffer.duration;
+
     function updateProgress() {
-        const elapsed = (Date.now() + serverOffset - playAtMs) / 1000;
-        const pct = Math.min(elapsed / duration * 100, 100);
+        const elapsed = (performance.now() + serverOffset - playAtMs) / 1000;
+        const pct = Math.max(0, Math.min(elapsed / duration * 100, 100));
         progressFill.style.width = pct + '%';
         timeElapsed.textContent = fmtTime(elapsed);
         timeRemaining.textContent = '-' + fmtTime(duration - elapsed);
-        if (pct < 100) progressRaf = requestAnimationFrame(updateProgress);
+
+        if (pct < 100) {
+            progressRaf = requestAnimationFrame(updateProgress);
+        }
     }
+
     progressFill.style.width = '0%';
     timeElapsed.textContent = '0:00';
     timeRemaining.textContent = '-' + fmtTime(duration);

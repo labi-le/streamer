@@ -21,7 +21,9 @@ func main() {
 	metaProvider := metadata.NewProvider(musicDir, lg)
 	s := streamer.New(localScanner, metaProvider, lg)
 
-	s.Queue.Advance(s.BroadcastState)
+	if s.Queue.Advance() {
+		s.BroadcastState()
+	}
 
 	if err := s.Serve(port); err != nil {
 		lg.Fatal().Err(err).Msg("server failed")

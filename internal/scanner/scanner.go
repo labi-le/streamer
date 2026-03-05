@@ -63,7 +63,7 @@ func (s *LocalScanner) updateCache() {
 
 func (s *LocalScanner) Scan() []string {
 	s.mu.RLock()
-	if time.Since(s.lastUpdate) < 1*time.Hour && len(s.cache) > 0 {
+	if !s.lastUpdate.IsZero() && time.Since(s.lastUpdate) < 1*time.Hour {
 		cpy := make([]string, len(s.cache))
 		copy(cpy, s.cache)
 		s.mu.RUnlock()
@@ -74,7 +74,7 @@ func (s *LocalScanner) Scan() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if time.Since(s.lastUpdate) < 1*time.Hour && len(s.cache) > 0 {
+	if !s.lastUpdate.IsZero() && time.Since(s.lastUpdate) < 1*time.Hour {
 		cpy := make([]string, len(s.cache))
 		copy(cpy, s.cache)
 		return cpy
@@ -87,13 +87,9 @@ func (s *LocalScanner) Scan() []string {
 	return cpy
 }
 
-func (s *LocalScanner) SelectFile(track string) string {
-	return filepath.Join(s.MusicDir, track)
-}
-
 func (s *LocalScanner) Exists(track string) bool {
 	s.mu.RLock()
-	if time.Since(s.lastUpdate) < 1*time.Hour && len(s.cache) > 0 {
+	if !s.lastUpdate.IsZero() && time.Since(s.lastUpdate) < 1*time.Hour {
 		_, ok := s.cacheMap[track]
 		s.mu.RUnlock()
 		return ok
@@ -103,10 +99,14 @@ func (s *LocalScanner) Exists(track string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if time.Since(s.lastUpdate) >= 1*time.Hour || len(s.cache) == 0 {
+	if s.lastUpdate.IsZero() || time.Since(s.lastUpdate) >= 1*time.Hour {
 		s.updateCache()
 	}
 
 	_, ok := s.cacheMap[track]
 	return ok
+}
+
+func (s *LocalScanner) SelectFile(track string) string {
+	return filepath.Join(s.MusicDir, track)
 }

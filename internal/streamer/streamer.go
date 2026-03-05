@@ -249,7 +249,9 @@ func (s *Streamer) SkipTrackHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	reqLogger(ctx).Info().Msg("skip requested")
-	s.Queue.Advance(s.BroadcastState)
+	if s.Queue.Advance() {
+		s.BroadcastState()
+	}
 }
 
 func (s *Streamer) LibraryHandler(ctx *fasthttp.RequestCtx) {
@@ -300,10 +302,14 @@ func (s *Streamer) QueueHandler(ctx *fasthttp.RequestCtx) {
 				ctx.SetBodyString("pidOr")
 				return
 			}
-			s.Queue.AppendItem(cmd.Track, s.BroadcastState)
+			if s.Queue.AppendItem(cmd.Track) {
+				s.BroadcastState()
+			}
 
 		case ActionRemove:
-			s.Queue.RemoveItem(cmd.Index, s.BroadcastState)
+			if s.Queue.RemoveItem(cmd.Index) {
+				s.BroadcastState()
+			}
 
 		default:
 			ctx.SetStatusCode(fasthttp.StatusBadRequest)
@@ -318,11 +324,13 @@ func (s *Streamer) QueueHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Streamer) Serve(port uint16) error {
+	go s.cleanupRoutine()
+
 	s.logger.Info().Msgf("server running on http://localhost:%d", port)
 
 	server := &fasthttp.Server{
 		Handler:       s.BuildRoute(),
-		MaxConnsPerIP: 20,
+		MaxConnsPerIP: 100,
 		ReadTimeout:   5 * time.Second,
 		IdleTimeout:   30 * time.Second,
 	}

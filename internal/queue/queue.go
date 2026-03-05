@@ -37,10 +37,17 @@ func (q *TrackQueue) GetState() State {
 	return *q.state.Load()
 }
 
-func (q *TrackQueue) Advance(onDone func()) {
+func (q *TrackQueue) Advance() bool {
 	q.mu.Lock()
+	defer q.mu.Unlock()
 
 	curr := q.state.Load()
+
+	if curr.PlayAt > time.Now().UnixMilli() {
+		q.logger.Debug().Msg("debounce: skip ignored")
+		return false
+	}
+
 	newState := &State{
 		PlayAt: time.Now().UnixMilli() + 3000,
 		Queue:  []string{},
@@ -58,21 +65,18 @@ func (q *TrackQueue) Advance(onDone func()) {
 
 	q.logger.Info().Str("track", newState.Name).Msg("advancing track")
 	q.state.Store(newState)
-	q.mu.Unlock()
-
-	if onDone != nil {
-		onDone()
-	}
+	return true
 }
 
-func (q *TrackQueue) AppendItem(item string, onDone func()) {
+func (q *TrackQueue) AppendItem(item string) bool {
 	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	curr := q.state.Load()
 
 	if len(curr.Queue) >= 200 {
 		q.logger.Warn().Msg("queue limit reached, rejecting item")
-		q.mu.Unlock()
-		return
+		return false
 	}
 
 	newQueue := make([]string, len(curr.Queue), len(curr.Queue)+1)
@@ -85,15 +89,13 @@ func (q *TrackQueue) AppendItem(item string, onDone func()) {
 		Queue:  newQueue,
 	})
 	q.logger.Info().Str("track", item).Msg("track appended to queue")
-	q.mu.Unlock()
-
-	if onDone != nil {
-		onDone()
-	}
+	return true
 }
 
-func (q *TrackQueue) RemoveItem(idx int, onDone func()) {
+func (q *TrackQueue) RemoveItem(idx int) bool {
 	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	curr := q.state.Load()
 
 	if idx >= 0 && idx < len(curr.Queue) {
@@ -107,17 +109,7 @@ func (q *TrackQueue) RemoveItem(idx int, onDone func()) {
 			Queue:  newQueue,
 		})
 		q.logger.Info().Int("index", idx).Msg("track removed from queue")
+		return true
 	}
-	q.mu.Unlock()
-
-	if onDone != nil {
-		onDone()
-	}
-}
-
-func (q *TrackQueue) shuffle(files []string) {
-	for i := len(files) - 1; i > 0; i-- {
-		j := rand.Intn(i + 1)
-		files[i], files[j] = files[j], files[i]
-	}
+	return false
 }
