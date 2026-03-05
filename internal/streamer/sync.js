@@ -285,7 +285,17 @@ async function removeFromQueue(index) {
 
 function toggleUI() {
     const content = document.getElementById('main-content');
-    content.classList.toggle('hidden');
+    const isHidden = content.classList.contains('hidden');
+
+    if (isHidden) {
+        document.body.classList.remove('centered-player');
+        content.classList.add('entering');
+        content.classList.remove('hidden');
+        requestAnimationFrame(() => requestAnimationFrame(() => content.classList.remove('entering')));
+    } else {
+        content.classList.add('hidden');
+        document.body.classList.add('centered-player');
+    }
 }
 
 function switchTab(tab) {
