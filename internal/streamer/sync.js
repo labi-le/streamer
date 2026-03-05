@@ -226,24 +226,49 @@ async function loadLibrary() {
 }
 
 let filteredFiles = [];
+let physicalTerm = '';
+
+const codeToChar = {};
+'abcdefghijklmnopqrstuvwxyz'.split('').forEach(c => { codeToChar['Key' + c.toUpperCase()] = c; });
+for (let i = 0; i <= 9; i++) { codeToChar['Digit' + i] = String(i); codeToChar['Numpad' + i] = String(i); }
+Object.assign(codeToChar, {
+    Space: ' ', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+    Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/'
+});
+
+function matchScore(str, term) {
+    if (str.includes(term)) return 0;
+    let first = -1, last = -1, i = 0, j = 0;
+    while (i < str.length && j < term.length) {
+        if (str[i] === term[j]) {
+            if (first === -1) first = i;
+            last = i;
+            j++;
+        }
+        i++;
+    }
+    return j === term.length ? last - first + 1 : Infinity;
+}
 
 searchInput.addEventListener('input', (e) => {
     const term = e.target.value.toLowerCase();
     if (!term) {
         filteredFiles = [];
+        physicalTerm = '';
         renderLibrary(allLibraryFiles);
         return;
     }
 
-    filteredFiles = allLibraryFiles.filter(f => {
+    if (physicalTerm.length > term.length) physicalTerm = physicalTerm.slice(physicalTerm.length - term.length);
+
+    const results = [];
+    for (const f of allLibraryFiles) {
         const str = f.toLowerCase();
-        let i = 0, j = 0;
-        while (i < str.length && j < term.length) {
-            if (str[i] === term[j]) j++;
-            i++;
-        }
-        return j === term.length;
-    });
+        const score = Math.min(matchScore(str, term), physicalTerm ? matchScore(str, physicalTerm) : Infinity);
+        if (score < Infinity) results.push({ f, score });
+    }
+    results.sort((a, b) => a.score - b.score);
+    filteredFiles = results.map(r => r.f);
 
     renderLibrary(filteredFiles);
 });
@@ -251,6 +276,14 @@ searchInput.addEventListener('input', (e) => {
 searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.repeat && filteredFiles.length > 0) {
         addToQueue(filteredFiles[0]);
+        return;
+    }
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key === 'Backspace') {
+        physicalTerm = physicalTerm.slice(0, -1);
+    } else if (e.key.length === 1) {
+        const c = codeToChar[e.code];
+        if (c) physicalTerm += c;
     }
 });
 
@@ -308,19 +341,20 @@ function toggleUI() {
 }
 
 document.addEventListener('keydown', (e) => {
-    if (document.activeElement === searchInput) return;
     if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (document.activeElement === searchInput) return;
     if (e.key.length !== 1 && e.key !== 'Backspace') return;
 
-    const content = document.getElementById('main-content');
-    if (content.classList.contains('hidden')) {
-        toggleUI();
+    if (e.key.length === 1) {
+        const c = codeToChar[e.code];
+        if (c) physicalTerm += c;
     }
 
+    const content = document.getElementById('main-content');
+    if (content.classList.contains('hidden')) toggleUI();
+
     const libBox = document.getElementById('library-box');
-    if (libBox.classList.contains('mobile-hidden')) {
-        switchTab('library');
-    }
+    if (libBox.classList.contains('mobile-hidden')) switchTab('library');
 
     searchInput.focus();
 });
