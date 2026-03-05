@@ -29,6 +29,13 @@ function fmtTime(sec) {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+trackNameEl.addEventListener('click', () => {
+    if (!currentTrackName) return;
+    navigator.clipboard.writeText(currentTrackName);
+    trackNameEl.classList.add('copied');
+    setTimeout(() => trackNameEl.classList.remove('copied'), 150);
+});
+
 loadLibrary();
 connectSSE();
 
