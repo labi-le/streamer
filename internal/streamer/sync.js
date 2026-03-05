@@ -39,14 +39,7 @@ trackNameEl.addEventListener('click', () => {
 loadLibrary();
 connectSSE();
 
-async function initSystem() {
-    startBtn.classList.add('hidden');
-
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-    }
-
+async function syncTime() {
     const samples = [];
     for (let i = 0; i < 8; i++) {
         const t0Perf = performance.now();
@@ -61,6 +54,18 @@ async function initSystem() {
 
     samples.sort((a, b) => a.rtt - b.rtt);
     serverOffset = samples[0].offset;
+}
+
+async function initSystem() {
+    startBtn.classList.add('hidden');
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+    }
+
+    await syncTime();
+    setInterval(syncTime, 20 * 60 * 1000);
 
     nextBtn.classList.remove('hidden');
     audioEnabled = true;
