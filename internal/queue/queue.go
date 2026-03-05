@@ -42,7 +42,7 @@ func (q *TrackQueue) Advance(onDone func()) {
 
 	curr := q.state.Load()
 	newState := &State{
-		PlayAt: time.Now().UnixMilli() + 5000,
+		PlayAt: time.Now().UnixMilli() + 3000,
 		Queue:  []string{},
 	}
 
