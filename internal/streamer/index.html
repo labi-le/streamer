@@ -223,6 +223,11 @@
         @media (max-width: 768px) {
             body { padding: 16px; }
             #player-view { margin-top: 10px; }
+
+            body.centered-player #player-view {
+                transform: translateY(calc(50vh - 50px - 50%)) scale(1);
+            }
+
             #main-art { max-width: 260px; }
             .grid { display: block; width: 100%; }
 

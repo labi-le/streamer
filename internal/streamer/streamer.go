@@ -109,7 +109,7 @@ func (s *Streamer) RateLimitMiddleware(next fasthttp.RequestHandler) fasthttp.Re
 		rawIP := getClientIP(ctx)
 
 		if lastSeen, ok := s.rateLimits.Get(rawIP); ok {
-			if time.Since(lastSeen) < 3*time.Second {
+			if time.Since(lastSeen) < 2*time.Second {
 				reqLogger(ctx).Warn().Msg("rate limit exceeded")
 				ctx.SetStatusCode(fasthttp.StatusTooManyRequests)
 				return
