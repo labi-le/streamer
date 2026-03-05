@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"steamer/internal/metadata"
@@ -14,7 +15,6 @@ import (
 	"steamer/internal/subscribers"
 	"steamer/pkg/storage"
 
-	"github.com/ferluci/fast-realip"
 	"github.com/rs/zerolog"
 	"github.com/valyala/fasthttp"
 )
@@ -45,7 +45,7 @@ type Streamer struct {
 	Metadata   *metadata.Provider
 	logger     zerolog.Logger
 	rateLimits *storage.SyncMap[string, time.Time]
-	flaggedIPs *storage.SyncMap[string, struct{}]
+	flaggedIPs *storage.SyncMap[string, time.Time]
 }
 
 func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog.Logger) *Streamer {
@@ -56,14 +56,33 @@ func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog
 		Metadata:   meta,
 		logger:     logger.With().Str("component", "streamer").Logger(),
 		rateLimits: storage.NewSyncMapStorage[string, time.Time](),
-		flaggedIPs: storage.NewSyncMapStorage[string, struct{}](),
+		flaggedIPs: storage.NewSyncMapStorage[string, time.Time](),
+	}
+}
+
+func (s *Streamer) cleanupRoutine() {
+	ticker := time.NewTicker(2 * time.Minute)
+	for range ticker.C {
+		now := time.Now()
+		s.rateLimits.Tap(func(ip string, lastSeen time.Time) bool {
+			if now.Sub(lastSeen) > 1*time.Minute {
+				s.rateLimits.Delete(ip)
+			}
+			return true
+		})
+		s.flaggedIPs.Tap(func(ip string, flaggedAt time.Time) bool {
+			if now.Sub(flaggedAt) > 1*time.Hour {
+				s.flaggedIPs.Delete(ip)
+			}
+			return true
+		})
 	}
 }
 
 func (s *Streamer) LoggerMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		start := time.Now()
-		ip := realip.FromRequest(ctx)
+		ip := getClientIP(ctx)
 
 		reqLog := s.logger.With().Str("ip", ip).Logger()
 		ctx.SetUserValue(loggerKey, &reqLog)
@@ -87,13 +106,10 @@ func (s *Streamer) LoggerMiddleware(next fasthttp.RequestHandler) fasthttp.Reque
 
 func (s *Streamer) RateLimitMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
-		rawIP := realip.FromRequest(ctx)
-		if rawIP == "" {
-			return
-		}
+		rawIP := getClientIP(ctx)
 
 		ip := net.ParseIP(rawIP)
-		if ip.IsLoopback() || ip.IsPrivate() {
+		if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
 			next(ctx)
 			return
 		}
@@ -104,7 +120,6 @@ func (s *Streamer) RateLimitMiddleware(next fasthttp.RequestHandler) fasthttp.Re
 				ctx.SetStatusCode(fasthttp.StatusTooManyRequests)
 				return
 			}
-			s.rateLimits.Delete(rawIP)
 		}
 
 		s.rateLimits.Add(rawIP, time.Now())
@@ -196,7 +211,7 @@ func (s *Streamer) EventsHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Streamer) AudioHandler(ctx *fasthttp.RequestCtx) {
-	if s.flaggedIPs.Exist(realip.FromRequest(ctx)) {
+	if s.flaggedIPs.Exist(getClientIP(ctx)) {
 		ctx.Response.Header.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		ctx.SetContentType("audio/mpeg")
 		ctx.SetBody(scaryMP3)
@@ -280,8 +295,8 @@ func (s *Streamer) QueueHandler(ctx *fasthttp.RequestCtx) {
 		switch cmd.Action {
 		case ActionAdd:
 			if !s.Scanner.Exists(cmd.Track) {
-				ip := realip.FromRequest(ctx)
-				s.flaggedIPs.Add(ip, struct{}{})
+				ip := getClientIP(ctx)
+				s.flaggedIPs.Add(ip, time.Now())
 
 				reqLogger(ctx).Warn().
 					Str("invalid_track", cmd.Track).
@@ -338,4 +353,25 @@ func (s *Streamer) BuildRoute() func(ctx *fasthttp.RequestCtx) {
 			ctx.NotFound()
 		}
 	}
+}
+
+func getClientIP(ctx *fasthttp.RequestCtx) string {
+	remoteIP := ctx.RemoteIP()
+
+	if !remoteIP.IsPrivate() && !remoteIP.IsLoopback() {
+		return remoteIP.String()
+	}
+
+	xRealIP := string(ctx.Request.Header.Peek("X-Real-IP"))
+	if xRealIP != "" {
+		return xRealIP
+	}
+
+	xff := string(ctx.Request.Header.Peek("X-Forwarded-For"))
+	if xff != "" {
+		ips := strings.Split(xff, ",")
+		return strings.TrimSpace(ips[0])
+	}
+
+	return remoteIP.String()
 }

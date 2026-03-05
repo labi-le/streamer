@@ -4,7 +4,6 @@ go 1.26.0
 
 require (
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
-	github.com/ferluci/fast-realip v1.0.1
 	github.com/rs/zerolog v1.34.0
 	github.com/valyala/fasthttp v1.69.0
 )
