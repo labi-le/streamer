@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
@@ -108,14 +107,8 @@ func (s *Streamer) RateLimitMiddleware(next fasthttp.RequestHandler) fasthttp.Re
 	return func(ctx *fasthttp.RequestCtx) {
 		rawIP := getClientIP(ctx)
 
-		ip := net.ParseIP(rawIP)
-		if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
-			next(ctx)
-			return
-		}
-
 		if lastSeen, ok := s.rateLimits.Get(rawIP); ok {
-			if time.Since(lastSeen) < 5*time.Second {
+			if time.Since(lastSeen) < 3*time.Second {
 				reqLogger(ctx).Warn().Msg("rate limit exceeded")
 				ctx.SetStatusCode(fasthttp.StatusTooManyRequests)
 				return
@@ -324,8 +317,16 @@ func (s *Streamer) QueueHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Streamer) Serve(port uint16) error {
-	s.logger.Info().Msg("server running on http://localhost:7777")
-	return fasthttp.ListenAndServe(fmt.Sprintf(":%d", port), s.BuildRoute())
+	s.logger.Info().Msgf("server running on http://localhost:%d", port)
+
+	server := &fasthttp.Server{
+		Handler:       s.BuildRoute(),
+		MaxConnsPerIP: 20,
+		ReadTimeout:   5 * time.Second,
+		IdleTimeout:   30 * time.Second,
+	}
+
+	return server.ListenAndServe(fmt.Sprintf(":%d", port))
 }
 
 func (s *Streamer) BuildRoute() func(ctx *fasthttp.RequestCtx) {
