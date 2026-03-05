@@ -17,20 +17,52 @@ type State struct {
 	Queue  []string `json:"queue"`
 }
 
+type StateStore interface {
+	Save(state State) error
+	Load() (State, error)
+}
+
 type TrackQueue struct {
 	state   atomic.Pointer[State]
 	mu      sync.Mutex
 	scanner scanner.LibraryScanner
 	logger  zerolog.Logger
+	store   StateStore
 }
 
-func NewTrackQueue(scanner scanner.LibraryScanner, logger zerolog.Logger) *TrackQueue {
+func NewTrackQueue(scanner scanner.LibraryScanner, logger zerolog.Logger, store StateStore) *TrackQueue {
 	q := &TrackQueue{
 		scanner: scanner,
 		logger:  logger.With().Str("component", "queue").Logger(),
+		store:   store,
 	}
-	q.state.Store(&State{Queue: []string{}})
+
+	initialState := &State{Queue: []string{}}
+	if store != nil {
+		storedState, err := store.Load()
+		if err == nil {
+			// Check if we actually got something (Name is not empty)
+			if storedState.Name != "" || len(storedState.Queue) > 0 {
+				initialState = &storedState
+				q.logger.Info().Msg("loaded queue state from storage")
+			}
+		} else {
+			q.logger.Warn().Err(err).Msg("failed to load queue state from storage")
+		}
+	}
+
+	q.state.Store(initialState)
 	return q
+}
+
+func (q *TrackQueue) save() {
+	if q.store == nil {
+		return
+	}
+	s := q.state.Load()
+	if err := q.store.Save(*s); err != nil {
+		q.logger.Warn().Err(err).Msg("failed to save queue state")
+	}
 }
 
 func (q *TrackQueue) GetState() State {
@@ -65,6 +97,7 @@ func (q *TrackQueue) Advance() bool {
 
 	q.logger.Info().Str("track", newState.Name).Msg("advancing track")
 	q.state.Store(newState)
+	q.save()
 	return true
 }
 
@@ -89,6 +122,7 @@ func (q *TrackQueue) AppendItem(item string) bool {
 		Queue:  newQueue,
 	})
 	q.logger.Info().Str("track", item).Msg("track appended to queue")
+	q.save()
 	return true
 }
 
@@ -109,6 +143,7 @@ func (q *TrackQueue) RemoveItem(idx int) bool {
 			Queue:  newQueue,
 		})
 		q.logger.Info().Int("index", idx).Msg("track removed from queue")
+		q.save()
 		return true
 	}
 	return false

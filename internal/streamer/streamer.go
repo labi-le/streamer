@@ -48,9 +48,9 @@ type Streamer struct {
 	flaggedIPs *storage.SyncMap[netip.Addr, time.Time]
 }
 
-func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog.Logger) *Streamer {
+func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog.Logger, store queue.StateStore) *Streamer {
 	return &Streamer{
-		Queue:      queue.NewTrackQueue(scanner, logger),
+		Queue:      queue.NewTrackQueue(scanner, logger, store),
 		Subs:       subscribers.NewManager(logger),
 		Scanner:    scanner,
 		Metadata:   meta,

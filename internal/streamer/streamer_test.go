@@ -68,7 +68,7 @@ func newTestEnv(t *testing.T, sc scanner.LibraryScanner) (*streamer.Streamer, *h
 	t.Helper()
 	logger := zerolog.Nop()
 	meta := metadata.NewProvider(t.TempDir(), logger)
-	s := streamer.New(sc, meta, logger)
+	s := streamer.New(sc, meta, logger, nil)
 	return s, newClient(t, s)
 }
 
@@ -86,7 +86,7 @@ func newAudioTestEnv(t *testing.T) (*streamer.Streamer, *http.Client, string) {
 	logger := zerolog.Nop()
 	sc := scanner.NewLocalScanner(dir, logger)
 	meta := metadata.NewProvider(dir, logger)
-	s := streamer.New(sc, meta, logger)
+	s := streamer.New(sc, meta, logger, nil)
 	if s.Queue.Advance() {
 		s.BroadcastState()
 	}
@@ -340,7 +340,7 @@ func TestAudioHandler_NoCurrentTrack_Returns404(t *testing.T) {
 	logger := zerolog.Nop()
 	sc := scanner.NewLocalScanner(dir, logger)
 	meta := metadata.NewProvider(dir, logger)
-	s := streamer.New(sc, meta, logger)
+	s := streamer.New(sc, meta, logger, nil)
 	// Do NOT advance queue → track is ""
 	client := newClient(t, s)
 
