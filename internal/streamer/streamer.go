@@ -323,6 +323,10 @@ func (s *Streamer) QueueHandler(ctx *fasthttp.RequestCtx) {
 	}
 }
 
+func (s *Streamer) FaviconHandler(ctx *fasthttp.RequestCtx) {
+	ctx.SetStatusCode(fasthttp.StatusNoContent)
+}
+
 func (s *Streamer) Serve(port uint16) error {
 	go s.cleanupRoutine()
 
@@ -343,6 +347,8 @@ func (s *Streamer) BuildRoute() func(ctx *fasthttp.RequestCtx) {
 		switch string(ctx.Path()) {
 		case "/":
 			s.IndexHandler(ctx)
+		case "/favicon.ico":
+			s.FaviconHandler(ctx)
 		case "/sync.js":
 			s.JSHandler(ctx)
 		case "/art":
