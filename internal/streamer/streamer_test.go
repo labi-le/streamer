@@ -246,8 +246,7 @@ func TestQueueHandler_AddValidTrack(t *testing.T) {
 	assertStatus(t, resp, 200)
 	readBody(t, resp)
 
-	// Verify via state directly: a second HTTP request to the same endpoint would
-	// be rate-limited (same "pipe" remote addr within 5 s window).
+	// Verify via state directly.
 	state := s.Queue.GetState()
 	if len(state.Queue) != 1 || state.Queue[0] != track {
 		t.Errorf("queue after add: got %v, want [%q]", state.Queue, track)
@@ -268,10 +267,10 @@ func TestQueueHandler_RemoveTrack(t *testing.T) {
 	track := "to_remove.mp3"
 	s, client := newTestEnv(t, &mockScanner{files: []string{track}})
 
-	// Add directly (bypasses rate limit so the HTTP remove POST isn't blocked).
+	// Add directly.
 	s.Queue.AppendItem(track)
 
-	// Remove via HTTP POST (the only POST in this test, so rate limit doesn't trigger).
+	// Remove via HTTP POST.
 	resp := doPost(t, client, "/api/queue", map[string]any{"action": "remove", "index": 0})
 	assertStatus(t, resp, 200)
 	readBody(t, resp)
@@ -538,25 +537,6 @@ func TestEventsHandler_BroadcastsQueueState(t *testing.T) {
 	t.Fatal("did not receive updated queue state over SSE")
 }
 
-// --- Tests: rate limit middleware ---
-
-func TestRateLimitMiddleware_BlocksRapidPosts(t *testing.T) {
-	// In-memory pipe connections have address "pipe" which is not a valid IP,
-	// so net.ParseIP returns nil and the loopback/private bypass is skipped —
-	// rate limiting is enforced.
-	_, client := newTestEnv(t, &mockScanner{files: []string{"x.mp3"}})
-
-	// First POST: accepted.
-	resp := doPost(t, client, "/api/next", nil)
-	assertStatus(t, resp, 200)
-	readBody(t, resp)
-
-	// Second POST within 5s: should be rate-limited.
-	resp = doPost(t, client, "/api/next", nil)
-	assertStatus(t, resp, 429)
-	readBody(t, resp)
-}
-
 // --- Tests: queue state propagated through Advance ---
 
 func TestSkipTrackHandler_ChangesCurrentTrack(t *testing.T) {
@@ -607,10 +587,10 @@ func TestQueueAdvance_UsesUserQueueFirst(t *testing.T) {
 	userTrack := "user_pick.mp3"
 	s, client := newTestEnv(t, &mockScanner{files: []string{userTrack, "random.mp3"}})
 
-	// Add directly so the HTTP POST for /api/next is not blocked by rate limit.
+	// Add directly.
 	s.Queue.AppendItem(userTrack)
 
-	// Advance via HTTP: must consume userTrack from the user queue.
+	// Advance via HTTP.
 	resp := doPost(t, client, "/api/next", nil)
 	assertStatus(t, resp, 200)
 	readBody(t, resp)

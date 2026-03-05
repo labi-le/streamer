@@ -44,7 +44,6 @@ type Streamer struct {
 	Scanner    scanner.LibraryScanner
 	Metadata   *metadata.Provider
 	logger     zerolog.Logger
-	rateLimits *storage.SyncMap[netip.Addr, time.Time]
 	flaggedIPs *storage.SyncMap[netip.Addr, time.Time]
 }
 
@@ -55,7 +54,6 @@ func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog
 		Scanner:    scanner,
 		Metadata:   meta,
 		logger:     logger.With().Str("component", "streamer").Logger(),
-		rateLimits: storage.NewSyncMapStorage[netip.Addr, time.Time](),
 		flaggedIPs: storage.NewSyncMapStorage[netip.Addr, time.Time](),
 	}
 }
@@ -64,12 +62,6 @@ func (s *Streamer) cleanupRoutine() {
 	ticker := time.NewTicker(2 * time.Minute)
 	for range ticker.C {
 		now := time.Now()
-		s.rateLimits.Tap(func(ip netip.Addr, lastSeen time.Time) bool {
-			if now.Sub(lastSeen) > 1*time.Minute {
-				s.rateLimits.Delete(ip)
-			}
-			return true
-		})
 		s.flaggedIPs.Tap(func(ip netip.Addr, flaggedAt time.Time) bool {
 			if now.Sub(flaggedAt) > 1*time.Hour {
 				s.flaggedIPs.Delete(ip)
@@ -101,23 +93,6 @@ func (s *Streamer) LoggerMiddleware(next fasthttp.RequestHandler) fasthttp.Reque
 			Int("size", size).
 			Dur("duration", time.Since(start)).
 			Msg("request")
-	}
-}
-
-func (s *Streamer) RateLimitMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
-	return func(ctx *fasthttp.RequestCtx) {
-		rawIP := getClientIP(ctx)
-
-		if lastSeen, ok := s.rateLimits.Get(rawIP); ok {
-			if time.Since(lastSeen) < 2*time.Second {
-				reqLogger(ctx).Warn().Msg("rate limit exceeded")
-				ctx.SetStatusCode(fasthttp.StatusTooManyRequests)
-				return
-			}
-		}
-
-		s.rateLimits.Add(rawIP, time.Now())
-		next(ctx)
 	}
 }
 
@@ -360,9 +335,9 @@ func (s *Streamer) BuildRoute() func(ctx *fasthttp.RequestCtx) {
 		case "/audio":
 			s.LoggerMiddleware(s.AudioHandler)(ctx)
 		case "/api/next":
-			s.LoggerMiddleware(s.RateLimitMiddleware(s.SkipTrackHandler))(ctx)
+			s.LoggerMiddleware(s.SkipTrackHandler)(ctx)
 		case "/api/queue":
-			s.LoggerMiddleware(s.RateLimitMiddleware(s.QueueHandler))(ctx)
+			s.LoggerMiddleware(s.QueueHandler)(ctx)
 		case "/api/library":
 			s.LoggerMiddleware(s.LibraryHandler)(ctx)
 		default:
