@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -43,8 +44,8 @@ type Streamer struct {
 	Scanner    scanner.LibraryScanner
 	Metadata   *metadata.Provider
 	logger     zerolog.Logger
-	rateLimits *storage.SyncMap[string, time.Time]
-	flaggedIPs *storage.SyncMap[string, time.Time]
+	rateLimits *storage.SyncMap[netip.Addr, time.Time]
+	flaggedIPs *storage.SyncMap[netip.Addr, time.Time]
 }
 
 func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog.Logger) *Streamer {
@@ -54,8 +55,8 @@ func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog
 		Scanner:    scanner,
 		Metadata:   meta,
 		logger:     logger.With().Str("component", "streamer").Logger(),
-		rateLimits: storage.NewSyncMapStorage[string, time.Time](),
-		flaggedIPs: storage.NewSyncMapStorage[string, time.Time](),
+		rateLimits: storage.NewSyncMapStorage[netip.Addr, time.Time](),
+		flaggedIPs: storage.NewSyncMapStorage[netip.Addr, time.Time](),
 	}
 }
 
@@ -63,13 +64,13 @@ func (s *Streamer) cleanupRoutine() {
 	ticker := time.NewTicker(2 * time.Minute)
 	for range ticker.C {
 		now := time.Now()
-		s.rateLimits.Tap(func(ip string, lastSeen time.Time) bool {
+		s.rateLimits.Tap(func(ip netip.Addr, lastSeen time.Time) bool {
 			if now.Sub(lastSeen) > 1*time.Minute {
 				s.rateLimits.Delete(ip)
 			}
 			return true
 		})
-		s.flaggedIPs.Tap(func(ip string, flaggedAt time.Time) bool {
+		s.flaggedIPs.Tap(func(ip netip.Addr, flaggedAt time.Time) bool {
 			if now.Sub(flaggedAt) > 1*time.Hour {
 				s.flaggedIPs.Delete(ip)
 			}
@@ -83,7 +84,7 @@ func (s *Streamer) LoggerMiddleware(next fasthttp.RequestHandler) fasthttp.Reque
 		start := time.Now()
 		ip := getClientIP(ctx)
 
-		reqLog := s.logger.With().Str("ip", ip).Logger()
+		reqLog := s.logger.With().Str("ip", ip.String()).Logger()
 		ctx.SetUserValue(loggerKey, &reqLog)
 
 		next(ctx)
@@ -356,23 +357,25 @@ func (s *Streamer) BuildRoute() func(ctx *fasthttp.RequestCtx) {
 	}
 }
 
-func getClientIP(ctx *fasthttp.RequestCtx) string {
-	remoteIP := ctx.RemoteIP()
+func getClientIP(ctx *fasthttp.RequestCtx) netip.Addr {
+	remoteAddr, _ := netip.AddrFromSlice(ctx.RemoteIP())
+	remoteAddr = remoteAddr.Unmap()
 
-	if !remoteIP.IsPrivate() && !remoteIP.IsLoopback() {
-		return remoteIP.String()
+	if !remoteAddr.IsPrivate() && !remoteAddr.IsLoopback() {
+		return remoteAddr
 	}
 
-	xRealIP := string(ctx.Request.Header.Peek("X-Real-IP"))
-	if xRealIP != "" {
-		return xRealIP
+	if xRealIP := string(ctx.Request.Header.Peek("X-Real-IP")); xRealIP != "" {
+		if addr, err := netip.ParseAddr(xRealIP); err == nil {
+			return addr
+		}
 	}
 
-	xff := string(ctx.Request.Header.Peek("X-Forwarded-For"))
-	if xff != "" {
-		ips := strings.Split(xff, ",")
-		return strings.TrimSpace(ips[0])
+	if xff := string(ctx.Request.Header.Peek("X-Forwarded-For")); xff != "" {
+		if addr, err := netip.ParseAddr(strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])); err == nil {
+			return addr
+		}
 	}
 
-	return remoteIP.String()
+	return remoteAddr
 }
