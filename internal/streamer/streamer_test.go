@@ -87,7 +87,9 @@ func newAudioTestEnv(t *testing.T) (*streamer.Streamer, *http.Client, string) {
 	sc := scanner.NewLocalScanner(dir, logger)
 	meta := metadata.NewProvider(dir, logger)
 	s := streamer.New(sc, meta, logger)
-	s.Queue.Advance(s.BroadcastState)
+	if s.Queue.Advance() {
+		s.BroadcastState()
+	}
 	return s, newClient(t, s), filename
 }
 
@@ -267,7 +269,7 @@ func TestQueueHandler_RemoveTrack(t *testing.T) {
 	s, client := newTestEnv(t, &mockScanner{files: []string{track}})
 
 	// Add directly (bypasses rate limit so the HTTP remove POST isn't blocked).
-	s.Queue.AppendItem(track, nil)
+	s.Queue.AppendItem(track)
 
 	// Remove via HTTP POST (the only POST in this test, so rate limit doesn't trigger).
 	resp := doPost(t, client, "/api/queue", map[string]any{"action": "remove", "index": 0})
@@ -396,7 +398,9 @@ func TestAudioHandler_FlaggedIP_ReceivesScreamer(t *testing.T) {
 func TestEventsHandler_ReceivesInitialState(t *testing.T) {
 	sc := &mockScanner{files: []string{"track.mp3"}}
 	s, client := newTestEnv(t, sc)
-	s.Queue.Advance(s.BroadcastState)
+	if s.Queue.Advance() {
+		s.BroadcastState()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -558,15 +562,14 @@ func TestRateLimitMiddleware_BlocksRapidPosts(t *testing.T) {
 func TestSkipTrackHandler_ChangesCurrentTrack(t *testing.T) {
 	tracks := []string{"first.mp3", "second.mp3"}
 	s, client := newTestEnv(t, &mockScanner{files: tracks})
-	s.Queue.Advance(s.BroadcastState) // pick initial track
 
 	resp := doPost(t, client, "/api/next", nil)
 	assertStatus(t, resp, 200)
 	readBody(t, resp)
 
-	// play_at is always set to now+5s; verify it is at least ~4s in the future.
+	// play_at is always set to now+3s; verify it is at least ~2s in the future.
 	after := s.Queue.GetState()
-	minExpected := time.Now().UnixMilli() + 4000
+	minExpected := time.Now().UnixMilli() + 2000
 	if after.PlayAt < minExpected {
 		t.Errorf("play_at %d is not far enough in the future (want >= %d)", after.PlayAt, minExpected)
 	}
@@ -577,7 +580,9 @@ func TestSkipTrackHandler_ChangesCurrentTrack(t *testing.T) {
 func TestQueueHandler_StateReflectsAdvance(t *testing.T) {
 	track := "the_track.mp3"
 	s, client := newTestEnv(t, &mockScanner{files: []string{track}})
-	s.Queue.Advance(s.BroadcastState)
+	if s.Queue.Advance() {
+		s.BroadcastState()
+	}
 
 	resp := doGet(t, client, "/api/queue")
 	assertStatus(t, resp, 200)
@@ -601,10 +606,9 @@ func TestQueueHandler_StateReflectsAdvance(t *testing.T) {
 func TestQueueAdvance_UsesUserQueueFirst(t *testing.T) {
 	userTrack := "user_pick.mp3"
 	s, client := newTestEnv(t, &mockScanner{files: []string{userTrack, "random.mp3"}})
-	s.Queue.Advance(s.BroadcastState) // initial random pick
 
 	// Add directly so the HTTP POST for /api/next is not blocked by rate limit.
-	s.Queue.AppendItem(userTrack, nil)
+	s.Queue.AppendItem(userTrack)
 
 	// Advance via HTTP: must consume userTrack from the user queue.
 	resp := doPost(t, client, "/api/next", nil)
