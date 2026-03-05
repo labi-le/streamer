@@ -225,14 +225,17 @@ async function loadLibrary() {
     renderLibrary(allLibraryFiles);
 }
 
+let filteredFiles = [];
+
 searchInput.addEventListener('input', (e) => {
     const term = e.target.value.toLowerCase();
     if (!term) {
+        filteredFiles = [];
         renderLibrary(allLibraryFiles);
         return;
     }
 
-    const filtered = allLibraryFiles.filter(f => {
+    filteredFiles = allLibraryFiles.filter(f => {
         const str = f.toLowerCase();
         let i = 0, j = 0;
         while (i < str.length && j < term.length) {
@@ -242,7 +245,13 @@ searchInput.addEventListener('input', (e) => {
         return j === term.length;
     });
 
-    renderLibrary(filtered);
+    renderLibrary(filteredFiles);
+});
+
+searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.repeat && filteredFiles.length > 0) {
+        addToQueue(filteredFiles[0]);
+    }
 });
 
 function renderLibrary(files) {
@@ -297,6 +306,24 @@ function toggleUI() {
         document.body.classList.add('centered-player');
     }
 }
+
+document.addEventListener('keydown', (e) => {
+    if (document.activeElement === searchInput) return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key.length !== 1 && e.key !== 'Backspace') return;
+
+    const content = document.getElementById('main-content');
+    if (content.classList.contains('hidden')) {
+        toggleUI();
+    }
+
+    const libBox = document.getElementById('library-box');
+    if (libBox.classList.contains('mobile-hidden')) {
+        switchTab('library');
+    }
+
+    searchInput.focus();
+});
 
 function switchTab(tab) {
     const libBox = document.getElementById('library-box');
