@@ -7,7 +7,7 @@ import (
 	"github.com/dhowden/tag"
 	"github.com/rs/zerolog"
 
-	"steamer/pkg/storage"
+	"streamer/pkg/storage"
 )
 
 type filename string

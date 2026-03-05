@@ -1,4 +1,4 @@
-module steamer
+module streamer
 
 go 1.26.0
 

@@ -2,17 +2,17 @@ package main
 
 import (
 	"flag"
-	"steamer/internal/logger"
-	"steamer/internal/metadata"
-	"steamer/internal/scanner"
-	"steamer/internal/state"
-	"steamer/internal/streamer"
+	"streamer/internal/logger"
+	"streamer/internal/metadata"
+	"streamer/internal/scanner"
+	"streamer/internal/state"
+	"streamer/internal/streamer"
 )
 
 func main() {
 	verbose := flag.Bool("v", true, "verbose output")
 	musicDir := flag.String("path", "/home/drive/sync/music", "streaming path")
-	dbPath := flag.String("db", "steamer.db", "path to state database")
+	dbPath := flag.String("db", "streamer.db", "path to state database")
 	port := flag.Uint("port", 7777, "listen port")
 
 	flag.Parse()

@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"steamer/internal/scanner"
+	"streamer/internal/scanner"
 
 	"github.com/rs/zerolog"
 )

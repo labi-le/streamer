@@ -3,7 +3,7 @@ package state
 import (
 	"path/filepath"
 	"reflect"
-	"steamer/internal/queue"
+	"streamer/internal/queue"
 	"testing"
 )
 

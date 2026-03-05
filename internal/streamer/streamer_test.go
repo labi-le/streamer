@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"steamer/internal/metadata"
-	"steamer/internal/scanner"
-	"steamer/internal/streamer"
+	"streamer/internal/metadata"
+	"streamer/internal/scanner"
+	"streamer/internal/streamer"
 
 	"github.com/rs/zerolog"
 	"github.com/valyala/fasthttp"

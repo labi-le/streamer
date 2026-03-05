@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"steamer/internal/queue"
+	"streamer/internal/queue"
 
 	_ "modernc.org/sqlite"
 )
@@ -21,7 +21,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStateStore, error) {
 	}
 
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS steamer_state (
+		CREATE TABLE IF NOT EXISTS streamer_state (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			name TEXT,
 			play_at INTEGER,
@@ -42,7 +42,7 @@ func (s *SQLiteStateStore) Save(state queue.State) error {
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO steamer_state (id, name, play_at, queue_json)
+		INSERT INTO streamer_state (id, name, play_at, queue_json)
 		VALUES (1, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
@@ -60,7 +60,7 @@ func (s *SQLiteStateStore) Load() (queue.State, error) {
 	)
 
 	err := s.db.QueryRow(
-		`SELECT name, play_at, queue_json FROM steamer_state WHERE id = 1`).
+		`SELECT name, play_at, queue_json FROM streamer_state WHERE id = 1`).
 		Scan(
 			&st.Name,
 			&st.PlayAt,

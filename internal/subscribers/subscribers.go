@@ -1,7 +1,7 @@
 package subscribers
 
 import (
-	"steamer/pkg/storage"
+	"streamer/pkg/storage"
 
 	"github.com/rs/zerolog"
 )

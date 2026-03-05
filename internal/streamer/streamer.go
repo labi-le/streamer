@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"steamer/internal/metadata"
-	"steamer/internal/queue"
-	"steamer/internal/scanner"
-	"steamer/internal/subscribers"
-	"steamer/pkg/storage"
+	"streamer/internal/metadata"
+	"streamer/internal/queue"
+	"streamer/internal/scanner"
+	"streamer/internal/subscribers"
+	"streamer/pkg/storage"
 
 	"github.com/rs/zerolog"
 	"github.com/valyala/fasthttp"
