@@ -164,6 +164,10 @@ async function fetchAndPlayAudio(playAtMs, name) {
             }
         }
 
+        if (total > 0 && loaded !== total) {
+            throw new Error(`Incomplete download: got ${loaded} of ${total} bytes`);
+        }
+
         timeElapsed.textContent = 'Decoding...';
         timeRemaining.textContent = '';
 
@@ -181,9 +185,15 @@ async function fetchAndPlayAudio(playAtMs, name) {
         schedulePlayback(audioBuffer, playAtMs, name);
     } catch (err) {
         if (err.name !== 'AbortError') {
-            trackNameEl.innerText = "Error loading audio";
+            trackNameEl.innerText = "Error loading. Retrying...";
             timeElapsed.textContent = 'Error';
             timeRemaining.textContent = '';
+
+            setTimeout(() => {
+                if (currentPlayAt === playAtMs && audioEnabled) {
+                    fetchAndPlayAudio(playAtMs, name);
+                }
+            }, 3000);
         }
     }
 }
