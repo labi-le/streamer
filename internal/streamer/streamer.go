@@ -1,11 +1,11 @@
 package streamer
 
 import (
+	"bufio"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"path/filepath"
 	"sync"
 	"time"
@@ -15,7 +15,9 @@ import (
 	"steamer/internal/scanner"
 	"steamer/internal/subscribers"
 
+	"github.com/ferluci/fast-realip"
 	"github.com/rs/zerolog"
+	"github.com/valyala/fasthttp"
 )
 
 //go:embed index.html
@@ -47,97 +49,58 @@ func New(scanner scanner.LibraryScanner, meta *metadata.Provider, logger zerolog
 	}
 }
 
-func getIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-type loggingResponseWriter struct {
-	http.ResponseWriter
-	status int
-	size   int
-}
-
-func (w *loggingResponseWriter) WriteHeader(code int) {
-	if w.status == 0 {
-		w.status = code
-		w.ResponseWriter.WriteHeader(code)
-	}
-}
-
-func (w *loggingResponseWriter) Write(b []byte) (int, error) {
-	if w.status == 0 {
-		w.status = http.StatusOK
-	}
-	n, err := w.ResponseWriter.Write(b)
-	w.size += n
-	return n, err
-}
-
-func (w *loggingResponseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (w *loggingResponseWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
-}
-
-func (s *Streamer) LoggerMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func (s *Streamer) LoggerMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
+	return func(ctx *fasthttp.RequestCtx) {
 		start := time.Now()
-		lw := &loggingResponseWriter{ResponseWriter: w}
-		ipStr := getIP(r)
 
-		defer func() {
-			status := lw.status
-			if status == 0 {
-				status = http.StatusOK
-			}
-			s.logger.Trace().
-				Str("method", r.Method).
-				Str("path", r.URL.Path).
-				Str("ip", ipStr).
-				Int("status", status).
-				Int("size", lw.size).
-				Dur("duration", time.Since(start)).
-				Msg("HTTP Request")
-		}()
+		next(ctx)
 
-		next(lw, r)
+		size := 0
+		if !ctx.Response.IsBodyStream() {
+			size = len(ctx.Response.Body())
+		}
+
+		s.logger.Trace().
+			Str("method", string(ctx.Method())).
+			Str("path", string(ctx.Path())).
+			Str("ip", realip.FromRequest(ctx)).
+			Int("status", ctx.Response.StatusCode()).
+			Int("size", size).
+			Dur("duration", time.Since(start)).
+			Msg("request")
 	}
 }
 
-func (s *Streamer) RateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			next(w, r)
+func (s *Streamer) RateLimitMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
+	return func(ctx *fasthttp.RequestCtx) {
+		if string(ctx.Method()) != fasthttp.MethodPost {
+			next(ctx)
 			return
 		}
 
-		ipStr := getIP(r)
-		ip := net.ParseIP(ipStr)
-		if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
-			next(w, r)
+		rawIP := realip.FromRequest(ctx)
+		if rawIP == "" {
 			return
 		}
 
-		if val, ok := s.rateLimits.Load(ipStr); ok {
+		ip := net.ParseIP(rawIP)
+		if ip.IsLoopback() || ip.IsPrivate() {
+			next(ctx)
+			return
+		}
+
+		if val, ok := s.rateLimits.Load(rawIP); ok {
 			lastSeen := val.(time.Time)
 			if time.Since(lastSeen) < 5*time.Second {
-				s.logger.Warn().Str("ip", ipStr).Msg("rate limit exceeded")
-				http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+				s.logger.Warn().Str("ip", rawIP).Msg("rate limit exceeded")
+				ctx.SetStatusCode(fasthttp.StatusTooManyRequests)
 				return
 			}
-			s.rateLimits.Delete(ipStr)
+			s.rateLimits.Delete(rawIP)
 		}
 
-		s.rateLimits.Store(ipStr, time.Now())
-		next(w, r)
+		s.rateLimits.Store(rawIP, time.Now())
+		next(ctx)
 	}
 }
 
@@ -156,62 +119,73 @@ func (s *Streamer) BroadcastState() {
 	s.Subs.Broadcast(string(s.marshalState()))
 }
 
-func (s *Streamer) IndexHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+func (s *Streamer) IndexHandler(ctx *fasthttp.RequestCtx) {
+	if string(ctx.Path()) != "/" {
+		ctx.NotFound()
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(indexHTML)
+	ctx.SetContentType("text/html; charset=utf-8")
+	ctx.SetBody(indexHTML)
 }
 
-func (s *Streamer) JSHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-	w.Write(syncJS)
+func (s *Streamer) JSHandler(ctx *fasthttp.RequestCtx) {
+	ctx.SetContentType("application/javascript; charset=utf-8")
+	ctx.SetBody(syncJS)
 }
 
-func (s *Streamer) TimeHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	fmt.Fprintf(w, "%d", time.Now().UnixMilli())
+func (s *Streamer) TimeHandler(ctx *fasthttp.RequestCtx) {
+	ctx.Response.Header.Set("Access-Control-Allow-Origin", "*")
+	fmt.Fprintf(ctx, "%d", time.Now().UnixMilli())
 }
 
-func (s *Streamer) EventsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+func (s *Streamer) EventsHandler(ctx *fasthttp.RequestCtx) {
+	ctx.SetContentType("text/event-stream")
+	ctx.Response.Header.Set("Cache-Control", "no-cache")
+	ctx.Response.Header.Set("Connection", "keep-alive")
 
-	ipStr := getIP(r)
+	ipStr := realip.FromRequest(ctx)
 	ch := make(chan string, 1)
 	s.Subs.Add(ch, ipStr)
 	s.BroadcastState()
 
-	fmt.Fprintf(w, "data: %s\n\n", string(s.marshalState()))
-	w.(http.Flusher).Flush()
+	initialState := s.marshalState()
 
-	defer func() {
-		s.Subs.Remove(ch, ipStr)
-		s.BroadcastState()
-	}()
+	ctx.SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer func() {
+			s.Subs.Remove(ch, ipStr)
+			s.BroadcastState()
+		}()
 
-	for {
-		select {
-		case msg := <-ch:
-			fmt.Fprintf(w, "data: %s\n\n", msg)
-			w.(http.Flusher).Flush()
-		case <-r.Context().Done():
+		fmt.Fprintf(w, "data: %s\n\n", initialState)
+		if err := w.Flush(); err != nil {
 			return
 		}
-	}
+
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case msg := <-ch:
+				fmt.Fprintf(w, "data: %s\n\n", msg)
+				if err := w.Flush(); err != nil {
+					return
+				}
+			case <-ticker.C:
+				fmt.Fprintf(w, ": ping\n\n")
+				if err := w.Flush(); err != nil {
+					return
+				}
+			}
+		}
+	})
 }
 
-func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
-	ipStr := getIP(r)
-
-	if _, flagged := s.flaggedIPs.Load(ipStr); flagged {
-		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-		w.Header().Set("Content-Type", "audio/mpeg")
-		s.logger.Info().Str("ip", ipStr).Msg("serving screamer to flagged IP")
-		w.Write(scaryMP3)
+func (s *Streamer) AudioHandler(ctx *fasthttp.RequestCtx) {
+	if _, flagged := s.flaggedIPs.Load(realip.FromRequest(ctx)); flagged {
+		ctx.Response.Header.Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		ctx.SetContentType("audio/mpeg")
+		ctx.SetBody(scaryMP3)
 		return
 	}
 
@@ -219,106 +193,144 @@ func (s *Streamer) AudioHandler(w http.ResponseWriter, r *http.Request) {
 	track := state.Name
 
 	if track == "" {
-		http.Error(w, "No track playing", http.StatusNotFound)
+		ctx.Error("No track playing", fasthttp.StatusNotFound)
 		return
 	}
 
 	local, ok := s.Scanner.(*scanner.LocalScanner)
 	if !ok {
-		http.Error(w, "Audio serving not supported for this scanner", http.StatusNotImplemented)
+		ctx.Error("Audio serving not supported for this scanner", fasthttp.StatusNotImplemented)
 		return
 	}
 
-	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	ctx.Response.Header.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	s.logger.Debug().Str("track", track).Msg("serving audio")
-	http.ServeFile(w, r, filepath.Join(local.MusicDir, track))
+	fasthttp.ServeFile(ctx, filepath.Join(local.MusicDir, track))
 }
 
-func (s *Streamer) ArtHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Streamer) ArtHandler(ctx *fasthttp.RequestCtx) {
 	state := s.Queue.GetState()
 	track := state.Name
 	if track == "" {
-		http.NotFound(w, r)
+		ctx.NotFound()
 		return
 	}
 
 	art, err := s.Metadata.GetArtwork(track)
 	if err != nil || art == nil {
-		http.NotFound(w, r)
+		ctx.NotFound()
 		return
 	}
 
-	w.Header().Set("Content-Type", art.MIMEType)
-	w.Header().Set("Cache-Control", "public, max-age=3600")
-	w.Write(art.Data)
+	ctx.SetContentType(art.MIMEType)
+	ctx.Response.Header.Set("Cache-Control", "public, max-age=3600")
+	ctx.SetBody(art.Data)
 }
 
-func (s *Streamer) SkipTrackHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+func (s *Streamer) SkipTrackHandler(ctx *fasthttp.RequestCtx) {
+	if string(ctx.Method()) != fasthttp.MethodPost {
+		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
 		return
 	}
 
-	s.logger.Info().Str("ip", getIP(r)).Msg("skip requested")
+	s.logger.Info().Str("ip", realip.FromRequest(ctx)).Msg("skip requested")
 	s.Queue.Advance(s.BroadcastState)
 }
 
-func (s *Streamer) LibraryHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Streamer) LibraryHandler(ctx *fasthttp.RequestCtx) {
 	files := s.Scanner.Scan()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(files)
+	ctx.SetContentType("application/json")
+	json.NewEncoder(ctx).Encode(files)
 }
 
 type queueCmd struct {
-	Action string `json:"action"`
+	Action action `json:"action"`
 	Track  string `json:"track"`
 	Index  int    `json:"index"`
 }
 
-func (s *Streamer) QueueHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+type action string
 
-	if r.Method == http.MethodGet {
+const (
+	ActionAdd    action = "add"
+	ActionRemove action = "remove"
+)
+
+func (s *Streamer) QueueHandler(ctx *fasthttp.RequestCtx) {
+	ctx.SetContentType("application/json")
+
+	switch string(ctx.Method()) {
+	case fasthttp.MethodGet:
 		state := s.Queue.GetState()
-		json.NewEncoder(w).Encode(state.Queue)
-		return
-	}
+		json.NewEncoder(ctx).Encode(state.Queue)
 
-	if r.Method == http.MethodPost {
+	case fasthttp.MethodPost:
 		var cmd queueCmd
-		if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-			http.Error(w, "Bad Request", http.StatusBadRequest)
+		if err := json.Unmarshal(ctx.PostBody(), &cmd); err != nil {
+			ctx.Error("Bad Request", fasthttp.StatusBadRequest)
 			return
 		}
 
 		switch cmd.Action {
-		case "add":
+		case ActionAdd:
 			if !s.Scanner.Exists(cmd.Track) {
-				ipStr := getIP(r)
-				s.flaggedIPs.Store(ipStr, struct{}{})
+				ip := realip.FromRequest(ctx)
+				s.flaggedIPs.Store(ip, struct{}{})
 
 				s.logger.Warn().
 					Str("invalid_track", cmd.Track).
-					Str("ip", ipStr).
-					Msg("malicious input detected, IP flagged for screamer")
+					Str("ip", ip).
+					Msg("malicious input detected, ip flagged")
 
-				w.WriteHeader(http.StatusTeapot)
-				w.Write([]byte(`pidOr`))
+				ctx.SetStatusCode(fasthttp.StatusTeapot)
+				ctx.SetBodyString("pidOr")
 				return
 			}
 			s.Queue.AppendItem(cmd.Track, s.BroadcastState)
 
-		case "remove":
+		case ActionRemove:
 			s.Queue.RemoveItem(cmd.Index, s.BroadcastState)
 
 		default:
-			http.Error(w, "Bad Request", http.StatusBadRequest)
+			ctx.SetStatusCode(fasthttp.StatusBadRequest)
 			return
 		}
 
-		w.WriteHeader(http.StatusOK)
-		return
-	}
+		ctx.SetStatusCode(fasthttp.StatusOK)
 
-	w.WriteHeader(http.StatusMethodNotAllowed)
+	default:
+		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Streamer) Serve(port uint16) error {
+	s.logger.Info().Msg("server running on http://localhost:7777")
+	return fasthttp.ListenAndServe(fmt.Sprintf(":%d", port), s.BuildRoute())
+}
+
+func (s *Streamer) BuildRoute() func(ctx *fasthttp.RequestCtx) {
+	return func(ctx *fasthttp.RequestCtx) {
+		switch string(ctx.Path()) {
+		case "/":
+			s.IndexHandler(ctx)
+		case "/sync.js":
+			s.JSHandler(ctx)
+		case "/art":
+			s.ArtHandler(ctx)
+		case "/time":
+			s.LoggerMiddleware(s.TimeHandler)(ctx)
+		case "/events":
+			s.LoggerMiddleware(s.EventsHandler)(ctx)
+		case "/audio":
+			s.LoggerMiddleware(s.AudioHandler)(ctx)
+		case "/api/next":
+			s.LoggerMiddleware(s.RateLimitMiddleware(s.SkipTrackHandler))(ctx)
+		case "/api/queue":
+			s.LoggerMiddleware(s.RateLimitMiddleware(s.QueueHandler))(ctx)
+		case "/api/library":
+			s.LoggerMiddleware(s.LibraryHandler)(ctx)
+		default:
+			ctx.NotFound()
+		}
+	}
 }
