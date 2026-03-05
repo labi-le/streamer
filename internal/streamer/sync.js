@@ -1,4 +1,3 @@
-const statusEl = document.getElementById('status');
 const trackNameEl = document.getElementById('track-name');
 const startBtn = document.getElementById('start-btn');
 const nextBtn = document.getElementById('next-btn');
@@ -34,7 +33,6 @@ connectSSE();
 
 async function initSystem() {
     startBtn.classList.add('hidden');
-    statusEl.innerHTML = '<span class="waveform"><span></span><span></span><span></span><span></span><span></span></span>';
 
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') {
@@ -56,7 +54,6 @@ async function initSystem() {
     serverOffset = samples[0].offset;
 
     nextBtn.classList.remove('hidden');
-    statusEl.innerHTML = '';
     audioEnabled = true;
 
     if (currentTrackName) {
@@ -115,19 +112,62 @@ async function fetchAndPlayAudio(playAtMs, name) {
     abortController = new AbortController();
     const signal = abortController.signal;
 
+    if (progressRaf) {
+        cancelAnimationFrame(progressRaf);
+        progressRaf = null;
+    }
+
     trackNameEl.innerText = name;
+    progressFill.style.width = '0%';
+    timeElapsed.textContent = 'Loading...';
+    timeRemaining.textContent = '';
 
     try {
         const response = await fetch('/audio', { signal });
-        const arrayBuffer = await response.arrayBuffer();
-        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        if (!response.ok) throw new Error('Fetch failed');
+
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        let loaded = 0;
+
+        const reader = response.body.getReader();
+        const chunks = [];
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            loaded += value.length;
+
+            if (total > 0) {
+                const pct = (loaded / total) * 100;
+                progressFill.style.width = pct + '%';
+                timeRemaining.textContent = Math.round(pct) + '%';
+            } else {
+                timeRemaining.textContent = (loaded / 1024 / 1024).toFixed(1) + ' MB';
+            }
+        }
+
+        timeElapsed.textContent = 'Decoding...';
+        timeRemaining.textContent = '';
+
+        const arrayBuffer = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+            arrayBuffer.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.buffer);
 
         if (currentPlayAt !== playAtMs) return;
 
         schedulePlayback(audioBuffer, playAtMs, name);
     } catch (err) {
         if (err.name !== 'AbortError') {
-            trackNameEl.innerText = "Error decoding audio";
+            trackNameEl.innerText = "Error loading audio";
+            timeElapsed.textContent = 'Error';
+            timeRemaining.textContent = '';
         }
     }
 }
